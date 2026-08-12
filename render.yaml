@@ -1,0 +1,78 @@
+databases:
+  - name: four-seasons-qc-db
+    plan: basic-256mb
+    databaseName: four_seasons_qc_db
+    user: four_seasons_user
+
+envVarGroups:
+  - name: four-seasons-main-survey-scope
+    envVars:
+      - key: MAIN_SURVEY_FORMDEF_VERSION
+        value: "2608060939,2608060937,2608060938"
+
+services:
+  - type: web
+    name: four-seasons-qc-platform
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    plan: starter
+    envVars:
+      - fromGroup: four-seasons-main-survey-scope
+      - key: DATABASE_URL
+        fromDatabase:
+          name: four-seasons-qc-db
+          property: connectionString
+      - key: FRONTEND_ORIGIN
+        value: https://four-seasons-qc-platform.onrender.com
+      - key: SURVEYCTO_SERVER
+        sync: false
+      - key: SURVEYCTO_USERNAME
+        sync: false
+      - key: SURVEYCTO_PASSWORD
+        sync: false
+      - key: SURVEYCTO_LISTING_FORM_ID
+        value: hh_listing_sampling
+      - key: SURVEYCTO_MAIN_FORM_ID
+        value: Season_survey
+      - key: SURVEYCTO_MAIN_DICTIONARY
+        value: data/monthly_xlsform_dictionary/BHT+4+SEASONS+JULY+2026.xlsx
+      - key: AUTO_SYNC_ENABLED
+        value: "false"
+      - key: AUTO_EXPORT_ENABLED
+        value: "true"
+
+  - type: worker
+    name: four-seasons-qc-platform-sync-worker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    dockerCommand: python run_etl_worker.py
+    envVars:
+      - fromGroup: four-seasons-main-survey-scope
+      - key: DATABASE_URL
+        fromDatabase:
+          name: four-seasons-qc-db
+          property: connectionString
+      - key: FRONTEND_ORIGIN
+        value: https://four-seasons-qc-platform.onrender.com
+      - key: SURVEYCTO_SERVER
+        sync: false
+      - key: SURVEYCTO_USERNAME
+        sync: false
+      - key: SURVEYCTO_PASSWORD
+        sync: false
+      - key: SURVEYCTO_LISTING_FORM_ID
+        value: hh_listing_sampling
+      - key: SURVEYCTO_MAIN_FORM_ID
+        value: Season_survey
+      - key: SURVEYCTO_MAIN_DICTIONARY
+        value: data/monthly_xlsform_dictionary/BHT+4+SEASONS+JULY+2026.xlsx
+      - key: AUTO_SYNC_ENABLED
+        value: "true"
+      - key: SYNC_INTERVAL_SECONDS
+        value: "3600"
+      - key: AUTO_EXPORT_ENABLED
+        value: "false"

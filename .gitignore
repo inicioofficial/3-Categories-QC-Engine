@@ -1,0 +1,36 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Frontend dependencies and builds
+frontend/node_modules/
+frontend/dist/
+node_modules/
+dist/
+
+# Runtime data and generated outputs
+data/raw/
+output/
+*.parquet
+*.log
+error_log.txt
+*.err
+*.tsbuildinfo
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
