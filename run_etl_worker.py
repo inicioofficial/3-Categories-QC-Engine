@@ -4,26 +4,42 @@ import asyncio
 import contextlib
 
 from backend.app.database import bootstrap_database
-from backend.app.etl_bridge import run_main_survey_sync_job
+from backend.app.services.main_survey import refresh_bht_map_mart, refresh_main_verbatim_answer_mart
 from backend.app.services.main_survey_cases import (
     bootstrap_main_case_status_reconciliation,
     bootstrap_main_rule_definitions,
+    refresh_main_operational_marts,
 )
 from backend.app.settings import get_settings
+from survey_platform.etl.category_forms import sync_all_category_forms
 
 
-async def scheduled_main_survey_sync_loop() -> None:
-    """Runs unified main SurveyCTO sync, then QC for newly added cases."""
+def run_category_sync_cycle(settings) -> dict:
+    """Pull all category forms, rebuild operational data, then refresh marts."""
+    result = sync_all_category_forms(settings.root_dir)
+    result["operationalMarts"] = refresh_main_operational_marts(settings)
+    result["mapMart"] = refresh_bht_map_mart(settings)
+    result["verbatimMart"] = refresh_main_verbatim_answer_mart(settings)
+    return result
+
+
+async def scheduled_category_sync_loop() -> None:
+    """Run immediately at worker startup, then once per configured interval."""
     while True:
         settings = get_settings()
         try:
-            print("ETL worker: starting scheduled Main Survey sync. QC will run for newly added cases after a successful sync.")
-            result = await asyncio.to_thread(run_main_survey_sync_job, "scheduler")
-            qc_result = result.get("qcResult") if isinstance(result, dict) else None
-            print(f"ETL worker: scheduled sync finished: {result.get('status') if isinstance(result, dict) else 'unknown'}; QC: {qc_result or 'no new cases'}")
+            print("ETL worker: starting scheduled three-category SurveyCTO sync.", flush=True)
+            result = await asyncio.to_thread(run_category_sync_cycle, settings)
+            counts = ", ".join(
+                f"{item['workspace']}={item['rows']}"
+                for item in result.get("workspaces", [])
+            )
+            print(f"ETL worker: category sync completed successfully ({counts}).", flush=True)
         except Exception as exc:
-            print(f"Scheduled Main Survey sync failed: {exc}")
-        await asyncio.sleep(settings.sync_interval_seconds)
+            print(f"ETL worker: scheduled category sync failed: {type(exc).__name__}: {exc}", flush=True)
+        interval = max(300, int(settings.sync_interval_seconds or 3600))
+        print(f"ETL worker: next category sync in {interval} seconds.", flush=True)
+        await asyncio.sleep(interval)
 
 
 async def main() -> None:
@@ -35,9 +51,8 @@ async def main() -> None:
     tasks: list[asyncio.Task[None]] = []
 
     if settings.auto_sync_enabled:
-        print(f"ETL worker: main SurveyCTO sync loop enabled every {settings.sync_interval_seconds} seconds.")
-        print("ETL worker: every successful sync will run Main QC on newly added cases.")
-        tasks.append(asyncio.create_task(scheduled_main_survey_sync_loop()))
+        print(f"ETL worker: three-category SurveyCTO sync enabled every {settings.sync_interval_seconds} seconds.")
+        tasks.append(asyncio.create_task(scheduled_category_sync_loop()))
     else:
         print("ETL worker: sync loops disabled by AUTO_SYNC_ENABLED=false.")
 
