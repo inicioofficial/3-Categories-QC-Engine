@@ -53,7 +53,9 @@ function CategoryGate({ children }: { children: ReactNode }) {
   }, [selectedWorkspace, selectWorkspace, validWorkspace]);
 
   if (!validWorkspace) return <Navigate to="/workspace-select" replace />;
-  if (selectedWorkspace !== validWorkspace) return null;
+  if (selectedWorkspace !== validWorkspace) {
+    return <div className="min-h-screen grid place-items-center bg-slate-50 text-sm font-medium text-slate-600">Loading category workspace...</div>;
+  }
   return <WorkspaceRoute>{children}</WorkspaceRoute>;
 }
 

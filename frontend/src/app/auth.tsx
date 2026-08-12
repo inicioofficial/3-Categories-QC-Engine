@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { Navigate } from "react-router-dom";
 
 import { apiFetch, clearApiCache, prefetchPostLoginData, type AuthUser } from "@/lib/api";
@@ -67,10 +67,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return payload.user;
   }
 
-  function selectWorkspace(workspace: WorkspaceModule) {
+  const selectWorkspace = useCallback((workspace: WorkspaceModule) => {
     sessionStorage.setItem(WORKSPACE_KEY, workspace);
     setSelectedWorkspace(workspace);
-  }
+  }, []);
 
   function selectCategory(category: string) {
     localStorage.setItem(CATEGORY_KEY, category);
