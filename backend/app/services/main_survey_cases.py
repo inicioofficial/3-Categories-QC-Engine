@@ -7165,7 +7165,7 @@ def list_enumerator_stats(settings: Settings, user: AuthUser, group_by: str = "e
                         SELECT
                             cb.group_id,
                             NULLIF(TRIM(rr.rule_code), '') AS rule_code,
-                            COUNT(*)::int AS flag_count
+                            COUNT(DISTINCT cb.case_id)::int AS flag_count
                         FROM qc.issue_queue iq
                         INNER JOIN qc.rule_result rr ON rr.rule_result_id = iq.rule_result_id
                         INNER JOIN case_base cb
@@ -7264,6 +7264,8 @@ def list_enumerator_stats(settings: Settings, user: AuthUser, group_by: str = "e
                 f"""
                 WITH case_base AS (
                     SELECT
+                        mc.case_id,
+                        mc.submission_key,
                         {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")} AS enumerator_id,
                         mc.approval_stage,
                         lower(trim(COALESCE(mc.record->>'consent_obtained', mc.record->>'consent', ''))) AS consent_value,
@@ -7286,33 +7288,30 @@ def list_enumerator_stats(settings: Settings, user: AuthUser, group_by: str = "e
                 ),
                 issue_counts AS (
                     SELECT
-                        {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")} AS enumerator_id,
+                        cb.enumerator_id,
                         COUNT(*) FILTER (WHERE COALESCE(NULLIF(TRIM(iq.issue_status), ''), 'pending_review') <> 'resolved')::int AS open_issues,
                         COUNT(*)::int AS total_issues
                     FROM qc.issue_queue iq
-                    INNER JOIN clean.main_case mc
-                      ON COALESCE(NULLIF(TRIM(mc.submission_key), ''), NULLIF(TRIM(mc.case_id), '')) =
+                    INNER JOIN case_base cb
+                      ON COALESCE(NULLIF(TRIM(cb.submission_key), ''), NULLIF(TRIM(cb.case_id), '')) =
                          COALESCE(NULLIF(TRIM(iq.submission_key), ''), NULLIF(TRIM(iq.case_id), ''))
                     WHERE iq.instrument_code = 'main'
-                      AND {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")} <> 'Unknown'
-                    GROUP BY {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")}
+                    GROUP BY cb.enumerator_id
                 ),
                 rule_flags AS (
                     SELECT
-                        {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")} AS enumerator_id,
+                        cb.enumerator_id,
                         NULLIF(TRIM(rr.rule_code), '') AS rule_code,
-                        COUNT(*)::int AS flag_count
+                        COUNT(DISTINCT cb.case_id)::int AS flag_count
                     FROM qc.issue_queue iq
                     INNER JOIN qc.rule_result rr ON rr.rule_result_id = iq.rule_result_id
-                    INNER JOIN clean.main_case mc
-                      ON COALESCE(NULLIF(TRIM(mc.submission_key), ''), NULLIF(TRIM(mc.case_id), '')) =
+                    INNER JOIN case_base cb
+                      ON COALESCE(NULLIF(TRIM(cb.submission_key), ''), NULLIF(TRIM(cb.case_id), '')) =
                          COALESCE(NULLIF(TRIM(iq.submission_key), ''), NULLIF(TRIM(iq.case_id), ''))
                     WHERE iq.instrument_code = 'main'
                       AND COALESCE(NULLIF(TRIM(iq.issue_status), ''), 'pending_review') <> 'resolved'
-                      AND {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")} <> 'Unknown'
                       AND NULLIF(TRIM(rr.rule_code), '') IS NOT NULL
-                    GROUP BY {_main_interviewer_sql("mc.interviewer_id", "mc.record->>'username'")},
-                             NULLIF(TRIM(rr.rule_code), '')
+                    GROUP BY cb.enumerator_id, NULLIF(TRIM(rr.rule_code), '')
                 ),
                 case_stats AS (
                     SELECT

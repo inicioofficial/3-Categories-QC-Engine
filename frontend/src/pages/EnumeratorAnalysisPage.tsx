@@ -65,10 +65,10 @@ function toNumber(value: unknown): number {
 
 type PerformanceGroupMode = "enumerator" | "city";
 
-function explorerQcRuleUrl(groupId: string, ruleCode: string, groupMode: PerformanceGroupMode) {
+function explorerQcRuleUrl(workspace: string | null, groupId: string, ruleCode: string, groupMode: PerformanceGroupMode) {
   const params = new URLSearchParams({ qc_rule: ruleCode });
   params.set(groupMode === "city" ? "cities" : "interviewers", groupId);
-  return `/main/cases?${params.toString()}`;
+  return `/${workspace || "main"}/cases?${params.toString()}`;
 }
 
 function normalizeEnumeratorStat(row: EnumeratorStat): EnumeratorStat {
@@ -155,7 +155,7 @@ const SYNTHETIC_ENUMERATOR_BY_DATE: EnumeratorProductivityByDatePayload = {
 };
 
 export function EnumeratorAnalysisPage() {
-  const { token } = useAuth();
+  const { token, selectedWorkspace } = useAuth();
   const [groupMode, setGroupMode] = useState<PerformanceGroupMode>("enumerator");
   const [items, setItems] = useState<EnumeratorStat[]>([]);
   const [productivityByDate, setProductivityByDate] = useState<EnumeratorProductivityByDatePayload>({ dates: [], items: [] });
@@ -420,7 +420,7 @@ export function EnumeratorAnalysisPage() {
                             <TableCell key={rule.code} className={`text-right tabular-nums ${count > 0 ? "font-semibold text-rose-700" : "text-slate-500"}`}>
                               {count > 0 ? (
                                 <Link
-                                  to={explorerQcRuleUrl(row.enumerator_id, rule.code, groupMode)}
+                                  to={explorerQcRuleUrl(selectedWorkspace, row.enumerator_id, rule.code, groupMode)}
                                   className="inline-flex rounded-lg px-2 py-1 text-rose-700 underline decoration-rose-300 underline-offset-4 transition hover:bg-rose-50 hover:text-rose-800"
                                   title={`View ${rule.label} cases for ${row.enumerator_name || row.enumerator_id}`}
                                 >
