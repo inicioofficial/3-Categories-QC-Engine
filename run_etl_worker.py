@@ -9,6 +9,7 @@ from backend.app.services.main_survey_cases import (
     bootstrap_main_case_status_reconciliation,
     bootstrap_main_rule_definitions,
     refresh_main_operational_marts,
+    run_main_qc,
 )
 from backend.app.settings import get_settings
 from survey_platform.etl.category_forms import sync_all_category_forms
@@ -17,6 +18,7 @@ from survey_platform.etl.category_forms import sync_all_category_forms
 def run_category_sync_cycle(settings) -> dict:
     """Pull all category forms, rebuild operational data, then refresh marts."""
     result = sync_all_category_forms(settings.root_dir)
+    result["automaticQc"] = run_main_qc(settings, only_pending=False, batch_limit=None)
     result["operationalMarts"] = refresh_main_operational_marts(settings)
     result["mapMart"] = refresh_bht_map_mart(settings)
     result["verbatimMart"] = refresh_main_verbatim_answer_mart(settings)

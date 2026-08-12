@@ -286,17 +286,5 @@ def rebuild_category_operational_data(base_dir: Path | None = None) -> dict[str,
                     case_count += 1
                 pipeline.__exit__(None, None, None)
                 results.append({"workspace": workspace.slug, "cases": case_count, "media": media_count})
-            cur.execute("""
-                INSERT INTO clean.audio_listening (case_id, status, audio_url, created_at)
-                SELECT media.case_id, 'pending', media.surveycto_path, media.created_at
-                FROM clean.main_case_media media
-                WHERE media.media_type = 'audio'
-                  AND media.variable_name LIKE 'audio_audit%'
-                  AND NOT EXISTS (
-                      SELECT 1 FROM clean.audio_listening listening
-                      WHERE listening.case_id = media.case_id
-                        AND listening.audio_url = media.surveycto_path
-                  )
-            """)
             conn.commit()
     return {"status": "success", "workspaces": results}

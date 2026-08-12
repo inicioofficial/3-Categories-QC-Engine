@@ -1356,7 +1356,10 @@ export function MainCasesPage() {
                 const qcFlags = Number((item as MainCaseListItem & { qc_flag_count?: number }).qc_flag_count ?? 0);
                 const issueCount = Math.max(item.open_issue_count, qcFlags);
                 const loadTone = issueCount >= 5 ? "text-rose-700" : issueCount >= 2 ? "text-amber-700" : "text-emerald-700";
-                const regionCaseTitle = `${caseRegionLabel(item)}_Resp._${item.region_respondent_ordinal ?? 1}`;
+                const regionLabel = caseRegionLabel(item);
+                const regionCaseTitle = regionLabel === "Region"
+                  ? `Resp._${item.region_respondent_ordinal ?? 1}`
+                  : `${regionLabel}_Resp._${item.region_respondent_ordinal ?? 1}`;
                 return (
                   <article key={item.submission_key} className={cn("rounded-2xl border border-white/70 bg-white/62 p-3 shadow-[0_10px_24px_rgba(15,23,42,0.05)]", canBulkSelect && selectedKeys.has(item.submission_key) && "border-sky-300 bg-sky-50/70")}>
                     <div className="flex items-start gap-3">

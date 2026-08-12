@@ -1038,13 +1038,7 @@ def refresh_main_operational_marts(settings: Settings) -> dict[str, Any]:
                                 'Region'
                             ) AS region_label,
                             ROW_NUMBER() OVER (
-                                PARTITION BY COALESCE(
-                                    NULLIF(TRIM({city_expr_all}), ''),
-                                    NULLIF(TRIM(mcd_all.state_name), ''),
-                                    NULLIF(TRIM(mc_all.record->>'state_name'), ''),
-                                    NULLIF(TRIM(mc_all.record->>'lga_name'), ''),
-                                    'Region'
-                                )
+                                PARTITION BY mc_all.form_id
                                 ORDER BY mc_all.submitted_at ASC NULLS LAST, mc_all.created_at ASC NULLS LAST, mc_all.case_id ASC
                             )::int AS region_respondent_ordinal
                         FROM clean.main_case mc_all
