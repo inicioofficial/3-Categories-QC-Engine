@@ -267,7 +267,7 @@ export function MainCaseDetailPage() {
               <h1 className="mt-5 max-w-3xl text-3xl font-black tracking-normal text-slate-950 md:text-4xl">{regionCaseTitle}</h1>
               <p className="mt-2 font-mono text-xs font-semibold uppercase tracking-[0.14em] text-sky-700">{profile.caseId}</p>
               <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-600">
-                Case-level quality desk for a 4 Seasons-End-End-Platform interview, combining respondent details, selected panels, QC findings, and review decision in one command view.
+                Case-level quality desk for a 3 Categories QC Platform interview, combining respondent details, selected panels, QC findings, and review decision in one command view.
               </p>
               <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <DataLine label="Region" value={profile.city} />

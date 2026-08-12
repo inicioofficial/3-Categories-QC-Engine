@@ -257,7 +257,7 @@ export function ListingAnalysisPage() {
         <div className="sticky top-0 z-20 rounded-[1.2rem] -mx-1 mb-6 bg-white/80 px-4 pb-4 pt-3 shadow-[0_4px_24px_rgba(148,163,184,0.12)] backdrop-blur-md">
           <div className="mb-4 flex items-center gap-3">
             <div className="flex h-12 shrink-0 items-center rounded-xl border border-blue-100 bg-blue-50 px-4 text-sm font-black tracking-[-0.02em] text-blue-700 shadow-sm md:h-14">
-              4 Seasons-End-End-Platform
+              3 Categories QC Platform
             </div>
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-[0.32em] text-slate-500">

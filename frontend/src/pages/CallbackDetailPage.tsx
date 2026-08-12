@@ -816,7 +816,7 @@ export function CallbackDetailPage() {
                   <div className="mb-5 space-y-4">
                     <div className="rounded-2xl border border-sky-100 bg-sky-50/70 p-4 text-sm leading-6 text-slate-700">
                       <p className="mb-2 text-[11px] font-black uppercase tracking-[0.22em] text-sky-700">Call script</p>
-                      Hello, good {getGreeting()}. My name is [Agent Name], and I am calling from Inicio Insights about the 4 Seasons BHT Tracker interview you recently completed. One of our interviewers spoke with you about household product categories such as noodles, toothpaste, edible oil, bleach, snacks, hair care, malt, condiments, breakfast cereals, toilet cleaner, and the common omnibus questions. I am calling to confirm that the interview took place and to verify a few responses for quality control. This will only take a few minutes, and your responses remain confidential.
+                      Hello, good {getGreeting()}. My name is [Agent Name], and I am calling from Inicio Insights about the 3 Categories interview you recently completed. One of our interviewers spoke with you about spread, edible oil, or breakfast cereal. I am calling to confirm that the interview took place and to verify a few responses for quality control. This will only take a few minutes, and your responses remain confidential.
                     </div>
                     <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-emerald-100 bg-emerald-50/60 p-4">
                       <p className="text-sm font-bold text-slate-700">Proceed with respondent verification?</p>

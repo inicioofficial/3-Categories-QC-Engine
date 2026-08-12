@@ -32,7 +32,7 @@ export function LoginPage() {
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-slate-900">
       <img
-        src="/login-hero-4seasons.png"
+        src="/login-hero-3-categories.png"
         alt=""
         aria-hidden="true"
         className="absolute inset-0 h-full w-full object-cover object-[57%_center] md:object-center"
@@ -61,7 +61,7 @@ export function LoginPage() {
               <p
                 className="text-[28px] font-black leading-none tracking-[-0.035em] text-slate-950"
               >
-                4 Seasons-End-End-Platform
+                3 Categories QC Platform
               </p>
               <p
                 className="mt-2 text-xs font-extrabold uppercase tracking-[0.22em] text-sky-700"
