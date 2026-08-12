@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -153,6 +154,10 @@ def sync_all_category_forms(
     server = read_env("SURVEYCTO_SERVER", dotenv, "edvoimpacts") or "edvoimpacts"
     username = read_env("SURVEYCTO_USERNAME", dotenv)
     password = read_env("SURVEYCTO_PASSWORD", dotenv)
+    try:
+        cooldown_seconds = max(0, int(read_env("CATEGORY_SYNC_COOLDOWN_SECONDS", dotenv, "240") or "240"))
+    except ValueError as exc:
+        raise RuntimeError("CATEGORY_SYNC_COOLDOWN_SECONDS must be a whole number of seconds.") from exc
     if not database_url:
         raise RuntimeError("DATABASE_URL is required for category-sync.")
     if not username or not password:
@@ -165,7 +170,7 @@ def sync_all_category_forms(
             raise RuntimeError(f"Unknown category workspace: {workspace_slug}")
 
     results = []
-    for workspace in workspaces:
+    for index, workspace in enumerate(workspaces):
         started = datetime.now(timezone.utc)
         result = sync_workspace(
             workspace,
@@ -176,6 +181,13 @@ def sync_all_category_forms(
         )
         result["startedAt"] = started.isoformat()
         results.append(result)
+        if index < len(workspaces) - 1 and cooldown_seconds:
+            next_workspace = workspaces[index + 1]
+            print(
+                f"SurveyCTO cooldown: waiting {cooldown_seconds} seconds before pulling {next_workspace.slug}.",
+                flush=True,
+            )
+            time.sleep(cooldown_seconds)
     operational = rebuild_category_operational_data(root)
     return {"status": "success", "workspaces": results, "operational": operational}
 

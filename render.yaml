@@ -46,5 +46,7 @@ services:
         value: "true"
       - key: SYNC_INTERVAL_SECONDS
         value: "3600"
+      - key: CATEGORY_SYNC_COOLDOWN_SECONDS
+        value: "240"
       - key: AUTO_EXPORT_ENABLED
         value: "false"
