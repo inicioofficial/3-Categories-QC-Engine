@@ -4684,54 +4684,61 @@ def _choice_label_map_from_xlsform(root_dir: str, variable_name: str) -> dict[st
 
 @lru_cache(maxsize=4)
 def _bau_snapshot_dictionary(root_dir: str) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
-    xlsform_dir = Path(root_dir) / "data" / "monthly_xlsform_dictionary"
-    dictionary_files = sorted(
-        (path for path in xlsform_dir.glob("*.xlsx") if not path.name.startswith("~$")),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    category_dir = Path(root_dir) / "data" / "category_xlsforms"
+    monthly_dir = Path(root_dir) / "data" / "monthly_xlsform_dictionary"
+    dictionary_files = [
+        *sorted(path for path in category_dir.glob("*.xlsx") if not path.name.startswith("~$")),
+        *sorted(
+            (path for path in monthly_dir.glob("*.xlsx") if not path.name.startswith("~$")),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        ),
+    ]
     if not dictionary_files:
         return {}, {}
 
-    try:
-        survey_df = pd.read_excel(dictionary_files[0], sheet_name="survey").fillna("")
-        choices_df = pd.read_excel(dictionary_files[0], sheet_name="choices").fillna("")
-    except Exception:
-        logger.warning("Unable to load XLSForm labels for BAU snapshot from %s.", dictionary_files[0], exc_info=True)
-        return {}, {}
-
     choices_by_list: dict[str, dict[str, str]] = defaultdict(dict)
-    if {"list_name", "name", "label"}.issubset(set(str(col) for col in choices_df.columns)):
-        for choice in choices_df.to_dict(orient="records"):
-            list_name = str(choice.get("list_name") or "").strip()
-            code = str(choice.get("name") or "").strip()
-            label = _clean_label_text(str(choice.get("label") or "")).strip()
-            if not list_name or not code or not label:
-                continue
-            choices_by_list[list_name][code] = label
-            if code.endswith(".0"):
-                choices_by_list[list_name][code[:-2]] = label
-            elif "." not in code and code.lstrip("-").isdigit():
-                choices_by_list[list_name][f"{code}.0"] = label
-
     question_labels: dict[str, str] = {}
     answer_labels: dict[str, dict[str, str]] = {}
-    if {"type", "name", "label"}.issubset(set(str(col) for col in survey_df.columns)):
-        for row in survey_df.to_dict(orient="records"):
-            qtype = str(row.get("type") or "").strip()
-            variable = str(row.get("name") or "").strip()
-            if not variable:
-                continue
-            label = _clean_label_text(str(row.get("label") or "")).strip()
-            if label:
-                question_labels[variable] = re.sub(rf"^{re.escape(variable)}\.?\s*", "", label, flags=re.IGNORECASE).strip() or label
+    survey_frames: list[pd.DataFrame] = []
+    for dictionary_file in dictionary_files:
+        try:
+            survey_df = pd.read_excel(dictionary_file, sheet_name="survey").fillna("")
+            choices_df = pd.read_excel(dictionary_file, sheet_name="choices").fillna("")
+        except Exception:
+            logger.warning("Unable to load XLSForm labels for BAU snapshot from %s.", dictionary_file, exc_info=True)
+            continue
+        survey_frames.append(survey_df)
+        if {"list_name", "name", "label"}.issubset(set(str(col) for col in choices_df.columns)):
+            for choice in choices_df.to_dict(orient="records"):
+                list_name = str(choice.get("list_name") or "").strip()
+                code = str(choice.get("name") or "").strip()
+                label = _clean_label_text(str(choice.get("label") or "")).strip()
+                if not list_name or not code or not label:
+                    continue
+                choices_by_list[list_name][code] = label
+                if code.endswith(".0"):
+                    choices_by_list[list_name][code[:-2]] = label
+                elif "." not in code and code.lstrip("-").isdigit():
+                    choices_by_list[list_name][f"{code}.0"] = label
 
-            low_type = qtype.lower()
-            if low_type.startswith("select_one ") or low_type.startswith("select_multiple "):
-                list_name = qtype.split(None, 1)[1].strip() if " " in qtype else ""
-                labels = choices_by_list.get(list_name, {})
-                if labels:
-                    answer_labels[variable] = labels
+    for survey_df in survey_frames:
+        if {"type", "name", "label"}.issubset(set(str(col) for col in survey_df.columns)):
+            for row in survey_df.to_dict(orient="records"):
+                qtype = str(row.get("type") or "").strip()
+                variable = str(row.get("name") or "").strip()
+                if not variable:
+                    continue
+                label = _clean_label_text(str(row.get("label") or "")).strip()
+                if label:
+                    question_labels[variable] = re.sub(rf"^{re.escape(variable)}\.?\s*", "", label, flags=re.IGNORECASE).strip() or label
+
+                low_type = qtype.lower()
+                if low_type.startswith("select_one ") or low_type.startswith("select_multiple "):
+                    list_name = qtype.split(None, 1)[1].strip() if " " in qtype else ""
+                    labels = choices_by_list.get(list_name, {})
+                    if labels:
+                        answer_labels[variable] = labels
 
     return question_labels, answer_labels
 
@@ -4783,15 +4790,24 @@ def _selected_panel_bau_snapshot(root_dir: str, record: dict[str, Any], selected
         for slug, meta in BHT_CATEGORY_PANEL_MAP.items()
         if meta.get("panelCode")
     }
+    workspace_panels = {
+        "spread": ("Spread", "SP"),
+        "edible-oil": ("Edible Oil", "EO"),
+        "breakfast-cereal": ("Breakfast Cereal", "SN"),
+    }
     rows: list[dict[str, Any]] = []
     for panel_code in selected_panel_codes:
-        slug = panel_to_slug.get(panel_code)
-        if not slug:
-            continue
-        prefix = BHT_CATEGORY_BAU5A_PREFIX.get(slug)
-        if not prefix:
-            continue
-        panel_label = BHT_CATEGORY_PANEL_MAP[slug]["label"]
+        workspace_panel = workspace_panels.get(str(panel_code).strip().lower())
+        if workspace_panel:
+            panel_label, prefix = workspace_panel
+        else:
+            slug = panel_to_slug.get(panel_code)
+            if not slug:
+                continue
+            prefix = BHT_CATEGORY_BAU5A_PREFIX.get(slug)
+            if not prefix:
+                continue
+            panel_label = BHT_CATEGORY_PANEL_MAP[slug]["label"]
         variables = [f"{prefix}_BAU1a", f"{prefix}_BAU5a"]
         seen: set[str] = set()
         for variable in variables:
