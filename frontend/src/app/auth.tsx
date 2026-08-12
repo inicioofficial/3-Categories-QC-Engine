@@ -21,7 +21,7 @@ type AuthContextValue = {
 
 const TOKEN_KEY = "efina_platform_token";
 const WORKSPACE_KEY = "efina_platform_workspace";
-const CATEGORY_KEY = "four_seasons_bht_category";
+const CATEGORY_KEY = "three_categories_bht_category";
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {

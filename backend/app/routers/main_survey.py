@@ -63,6 +63,7 @@ from backend.app.services.main_survey_cases import (
     update_main_ea_status,
 )
 from backend.app.services.surveycto_credentials import create_surveycto_session, resolve_surveycto_credentials
+from backend.app.workspace_context import WORKSPACE_FORM_IDS
 from backend.app.settings import Settings, get_settings
 from backend.app.activity_log import log_activity
 
@@ -406,12 +407,16 @@ def create_main_surveycto_session(
     user: AuthUser = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ):
+    form_id = str(payload.formId or "").strip()
+    allowed_form_ids = set(WORKSPACE_FORM_IDS.values())
+    if form_id not in allowed_form_ids:
+        raise HTTPException(status_code=400, detail="Select a valid category before logging in to SurveyCTO.")
     return create_surveycto_session(
         settings,
         user,
         payload.surveyctoUsername or "",
         payload.surveyctoPassword or "",
-        payload.formId or settings.surveycto_main_form_id,
+        form_id,
     )
 
 

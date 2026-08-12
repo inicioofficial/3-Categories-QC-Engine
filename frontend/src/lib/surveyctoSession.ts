@@ -1,7 +1,7 @@
 import { apiFetch } from "@/lib/api";
 
-const SURVEYCTO_SESSION_KEY = "four_seasons_surveycto_session";
-const SURVEYCTO_SESSION_EXPIRES_KEY = "four_seasons_surveycto_session_expires_at";
+const SURVEYCTO_SESSION_KEY = "three_categories_surveycto_session";
+const SURVEYCTO_SESSION_EXPIRES_KEY = "three_categories_surveycto_session_expires_at";
 
 function clearStoredSurveyCtoSession() {
   sessionStorage.removeItem(SURVEYCTO_SESSION_KEY);
@@ -37,12 +37,13 @@ export async function createSurveyCtoSession(
   token: string | null,
   surveyctoUsername: string,
   surveyctoPassword: string,
+  formId: string,
 ) {
   const payload = await apiFetch<{ token: string; expiresInSeconds: number }>(
     "/api/main-survey/surveycto-session",
     {
       method: "POST",
-      body: JSON.stringify({ surveyctoUsername, surveyctoPassword }),
+      body: JSON.stringify({ surveyctoUsername, surveyctoPassword, formId }),
     },
     token,
     30_000,

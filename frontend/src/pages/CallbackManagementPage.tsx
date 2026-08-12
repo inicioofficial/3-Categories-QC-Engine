@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import { createSurveyCtoSession, hasValidSurveyCtoSession } from "@/lib/surveyctoSession";
 import { cn } from "@/lib/utils";
 import { matchesSearchTerm } from "@/lib/search";
+import { getSurveyWorkspace } from "@/data/workspaces";
 
 const OUTCOME_OPTIONS = [
   { value: "completed", label: "Respondent reachable - completed" },
@@ -103,7 +104,8 @@ function callbackStatusLabel(item: CallbackCase) {
 }
 
 export function CallbackManagementPage() {
-  const { token, user } = useAuth();
+  const { token, user, selectedWorkspace } = useAuth();
+  const workspace = getSurveyWorkspace(selectedWorkspace);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<CallbackCase[]>([]);
@@ -404,7 +406,8 @@ export function CallbackManagementPage() {
     setSurveyLoggingIn(true);
     setSurveyLoginError(null);
     try {
-      await createSurveyCtoSession(token, surveyUsername, surveyPassword);
+      if (!workspace) throw new Error("Select a category workspace before signing in to SurveyCTO.");
+      await createSurveyCtoSession(token, surveyUsername, surveyPassword, workspace.formId);
       const nextCaseId = pendingCaseId;
       setSurveyLoggingIn(false);
       setSurveyModalOpen(false);

@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { apiFetch } from "@/lib/api";
 import { createSurveyCtoSession, hasValidSurveyCtoSession } from "@/lib/surveyctoSession";
 import { cn } from "@/lib/utils";
+import { getSurveyWorkspace } from "@/data/workspaces";
 
 interface PictureCheckItem {
   submission_key: string;
@@ -97,7 +98,8 @@ function sortValue(row: PictureCheckItem, key: SortKey): string | number {
 }
 
 export function ListingPictureCheckPage({ module = "listing" }: ListingPictureCheckPageProps) {
-  const { token, user } = useAuth();
+  const { token, user, selectedWorkspace } = useAuth();
+  const workspace = getSurveyWorkspace(selectedWorkspace);
   const navigate = useNavigate();
   const isAdmin = Boolean(user);
   const isMainModule = module === "main";
@@ -411,7 +413,13 @@ export function ListingPictureCheckPage({ module = "listing" }: ListingPictureCh
     setSurveyLoggingIn(true);
     setSurveyLoginError(null);
     try {
-      await createSurveyCtoSession(token, surveyUsername, surveyPassword);
+      if (isMainModule && !workspace) throw new Error("Select a category workspace before signing in to SurveyCTO.");
+      await createSurveyCtoSession(
+        token,
+        surveyUsername,
+        surveyPassword,
+        isMainModule ? workspace!.formId : "hh_listing_sampling",
+      );
       setSurveyLoggingIn(false);
       setSurveyModalOpen(false);
       setSurveyPassword("");

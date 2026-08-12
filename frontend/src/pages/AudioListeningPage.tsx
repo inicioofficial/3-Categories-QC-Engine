@@ -15,6 +15,7 @@ import { apiFetch } from "@/lib/api";
 import { createSurveyCtoSession, hasValidSurveyCtoSession } from "@/lib/surveyctoSession";
 import { cn } from "@/lib/utils";
 import { matchesSearchTerm } from "@/lib/search";
+import { getSurveyWorkspace } from "@/data/workspaces";
 
 const STATUS_BADGE: Record<string, string> = {
   pending: "border-amber-500/30 bg-amber-500/12 text-amber-700",
@@ -65,7 +66,8 @@ function matchesAudioStatusFilter(item: AudioReview, selectedStatuses: string[])
 }
 
 export function AudioListeningPage() {
-  const { token, user } = useAuth();
+  const { token, user, selectedWorkspace } = useAuth();
+  const workspace = getSurveyWorkspace(selectedWorkspace);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<AudioReview[]>([]);
@@ -118,7 +120,8 @@ export function AudioListeningPage() {
     setSurveyLoggingIn(true);
     setSurveyLoginError(null);
     try {
-      await createSurveyCtoSession(token, surveyUsername, surveyPassword);
+      if (!workspace) throw new Error("Select a category workspace before signing in to SurveyCTO.");
+      await createSurveyCtoSession(token, surveyUsername, surveyPassword, workspace.formId);
       const nextCaseId = pendingCaseId;
       setSurveyLoggingIn(false);
       setSurveyModalOpen(false);
