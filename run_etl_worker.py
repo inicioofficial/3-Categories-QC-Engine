@@ -26,9 +26,12 @@ def run_category_sync_cycle(settings) -> dict:
 
 
 async def scheduled_category_sync_loop() -> None:
-    """Run immediately at worker startup, then once per configured interval."""
+    """Run immediately at startup, then keep sync starts on the configured cadence."""
+    loop = asyncio.get_running_loop()
     while True:
         settings = get_settings()
+        interval = max(300, int(settings.sync_interval_seconds or 3600))
+        cycle_started = loop.time()
         try:
             print("ETL worker: starting scheduled three-category SurveyCTO sync.", flush=True)
             result = await asyncio.to_thread(run_category_sync_cycle, settings)
@@ -39,9 +42,22 @@ async def scheduled_category_sync_loop() -> None:
             print(f"ETL worker: category sync completed successfully ({counts}).", flush=True)
         except Exception as exc:
             print(f"ETL worker: scheduled category sync failed: {type(exc).__name__}: {exc}", flush=True)
-        interval = max(300, int(settings.sync_interval_seconds or 3600))
-        print(f"ETL worker: next category sync in {interval} seconds.", flush=True)
-        await asyncio.sleep(interval)
+
+        elapsed = loop.time() - cycle_started
+        delay = max(0.0, interval - elapsed)
+        if delay:
+            print(
+                f"ETL worker: next category sync in {delay:.0f} seconds "
+                f"(start-to-start interval {interval} seconds).",
+                flush=True,
+            )
+            await asyncio.sleep(delay)
+        else:
+            print(
+                f"ETL worker: category sync took {elapsed:.0f} seconds, exceeding the "
+                f"{interval}-second interval; starting the next cycle immediately.",
+                flush=True,
+            )
 
 
 async def main() -> None:
