@@ -4,11 +4,13 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import quote, unquote, urlparse
 
+import requests as req_lib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from backend.app.database import bootstrap_database, database_ready_for_startup, db_connection
 from backend.app.routers.auth import router as auth_router
@@ -27,6 +29,7 @@ from backend.app.services.main_survey_cases import (
     bootstrap_main_case_status_reconciliation,
     bootstrap_main_rule_definitions,
 )
+from backend.app.services.surveycto_credentials import resolve_surveycto_credentials_for_media
 from backend.app.settings import get_settings
 from backend.app.workspace_context import ACTIVE_WORKSPACE, WORKSPACE_FORM_IDS
 
@@ -148,12 +151,101 @@ def _run_startup_bootstraps_sync(settings) -> None:
     refresh_main_verbatim_answer_mart(settings)
 
 
+def _fetch_server_managed_surveycto_media(settings, media_ref: str, workspace: str | None) -> tuple[bytes, str]:
+    surveycto_username, surveycto_password = resolve_surveycto_credentials_for_media(settings)
+    expected_host = f"{settings.surveycto_server}.surveycto.com".lower()
+    media_ref = unquote(media_ref).strip()
+    if not media_ref:
+        raise HTTPException(status_code=400, detail="Media reference is required.")
+
+    candidate_urls: list[str] = []
+    parsed = urlparse(media_ref)
+    if parsed.scheme or parsed.netloc:
+        if parsed.scheme.lower() != "https" or (parsed.hostname or "").lower() != expected_host:
+            raise HTTPException(status_code=400, detail="Only media from the configured SurveyCTO server can be proxied.")
+        candidate_urls.append(media_ref)
+    else:
+        bare_filename = media_ref.replace("\\", "/").split("/")[-1].strip()
+        if not bare_filename:
+            raise HTTPException(status_code=400, detail="Media filename is required.")
+
+        form_ids: list[str] = []
+        if workspace and workspace in WORKSPACE_FORM_IDS:
+            form_ids.append(WORKSPACE_FORM_IDS[workspace])
+        form_ids.extend(WORKSPACE_FORM_IDS.values())
+        if settings.surveycto_main_form_id:
+            form_ids.append(settings.surveycto_main_form_id)
+        if settings.surveycto_listing_form_id:
+            form_ids.append(settings.surveycto_listing_form_id)
+
+        seen: set[str] = set()
+        for form_id in form_ids:
+            normalized_form_id = str(form_id or "").strip()
+            if not normalized_form_id or normalized_form_id in seen:
+                continue
+            seen.add(normalized_form_id)
+            candidate_urls.append(
+                f"https://{expected_host}/api/v1/forms/{quote(normalized_form_id, safe='')}"
+                f"/files/multimedia/{quote(bare_filename, safe='')}"
+            )
+
+    last_status: int | None = None
+    authorization_failed = False
+    for media_url in candidate_urls:
+        try:
+            resp = req_lib.get(
+                media_url,
+                auth=(surveycto_username, surveycto_password),
+                timeout=30,
+            )
+        except req_lib.RequestException as exc:
+            raise HTTPException(status_code=502, detail=f"Could not reach SurveyCTO: {exc}") from exc
+
+        if resp.status_code == 200:
+            return resp.content, resp.headers.get("content-type", "application/octet-stream")
+        if resp.status_code in {401, 403}:
+            authorization_failed = True
+            last_status = resp.status_code
+            continue
+        if resp.status_code == 404:
+            last_status = 404
+            continue
+        last_status = resp.status_code
+
+    if authorization_failed and last_status in {401, 403}:
+        raise HTTPException(status_code=last_status, detail="The server SurveyCTO credentials cannot access this media file.")
+    if last_status and last_status != 404:
+        raise HTTPException(status_code=last_status, detail=f"SurveyCTO returned HTTP {last_status}.")
+    raise HTTPException(status_code=404, detail="Media file not found in the configured SurveyCTO forms.")
+
+
 app = FastAPI(
     title="INICIO SurveyCTO ETL QC Platform",
     version="0.1.0",
     summary="Listing ETL, QC, dashboards, exports, and map APIs for INICIO.",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def server_managed_surveycto_media_middleware(request, call_next):
+    raw_path = request.scope.get("raw_path") or b""
+    prefix = b"/api/main-survey/media-proxy/"
+    if raw_path.startswith(prefix):
+        encoded_media_ref = raw_path[len(prefix):].decode("utf-8", errors="replace")
+        workspace = str(request.headers.get("x-workspace") or "").strip().lower() or None
+        settings = get_settings()
+        try:
+            content, content_type = await asyncio.to_thread(
+                _fetch_server_managed_surveycto_media,
+                settings,
+                encoded_media_ref,
+                workspace,
+            )
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        return Response(content=content, media_type=content_type)
+    return await call_next(request)
 
 
 @app.middleware("http")
