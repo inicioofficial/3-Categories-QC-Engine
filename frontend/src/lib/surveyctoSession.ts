@@ -1,5 +1,3 @@
-import { apiFetch } from "@/lib/api";
-
 const SURVEYCTO_SESSION_KEY = "three_categories_surveycto_session";
 const SURVEYCTO_SESSION_EXPIRES_KEY = "three_categories_surveycto_session_expires_at";
 
@@ -8,50 +6,62 @@ function clearStoredSurveyCtoSession() {
   sessionStorage.removeItem(SURVEYCTO_SESSION_EXPIRES_KEY);
 }
 
+/**
+ * SurveyCTO media authentication is managed by the backend with Render env vars.
+ * Legacy per-user session tokens are deliberately disabled.
+ */
 export function getSurveyCtoSessionToken() {
-  const token = sessionStorage.getItem(SURVEYCTO_SESSION_KEY);
-  const expiresAt = Number(sessionStorage.getItem(SURVEYCTO_SESSION_EXPIRES_KEY) ?? "0");
-  if (!token || !Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
-    clearStoredSurveyCtoSession();
-    return null;
-  }
-  return token;
+  clearStoredSurveyCtoSession();
+  return null;
 }
 
 export function clearSurveyCtoSessionToken() {
   clearStoredSurveyCtoSession();
 }
 
+/**
+ * Kept for compatibility with existing media-page gates. Media is always ready
+ * from the user's perspective because the backend owns the SurveyCTO credentials.
+ */
 export function hasValidSurveyCtoSession() {
-  return Boolean(getSurveyCtoSessionToken());
+  clearStoredSurveyCtoSession();
+  return true;
 }
 
 export function withSurveyCtoSession(url: string) {
-  const token = getSurveyCtoSessionToken();
-  if (!token) return url;
-  const separator = url.includes("?") ? "&" : "?";
-  return `${url}${separator}surveycto_session=${encodeURIComponent(token)}`;
+  clearStoredSurveyCtoSession();
+
+  // Never send users directly to SurveyCTO. Route SurveyCTO media through our
+  // backend so SURVEYCTO_USERNAME/PASSWORD stay server-side on Render.
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname.toLowerCase().endsWith(".surveycto.com")) {
+        return `/api/main-survey/media-proxy/${encodeURIComponent(url)}`;
+      }
+    } catch {
+      return url;
+    }
+  }
+
+  return url;
 }
 
+/**
+ * Legacy compatibility shim. Existing pages may still call this function from
+ * old credential-dialog code, but credentials are intentionally never sent or
+ * stored. Those dialogs are bypassed because hasValidSurveyCtoSession() is true.
+ */
 export async function createSurveyCtoSession(
   token: string | null,
   surveyctoUsername: string,
   surveyctoPassword: string,
   formId: string,
 ) {
-  const payload = await apiFetch<{ token: string; expiresInSeconds: number }>(
-    "/api/main-survey/surveycto-session",
-    {
-      method: "POST",
-      body: JSON.stringify({ surveyctoUsername, surveyctoPassword, formId }),
-    },
-    token,
-    30_000,
-  );
-  sessionStorage.setItem(SURVEYCTO_SESSION_KEY, payload.token);
-  sessionStorage.setItem(
-    SURVEYCTO_SESSION_EXPIRES_KEY,
-    String(Date.now() + Math.max(0, payload.expiresInSeconds) * 1000),
-  );
-  return payload;
+  void token;
+  void surveyctoUsername;
+  void surveyctoPassword;
+  void formId;
+  clearStoredSurveyCtoSession();
+  return { token: "", expiresInSeconds: 0, serverManaged: true };
 }
