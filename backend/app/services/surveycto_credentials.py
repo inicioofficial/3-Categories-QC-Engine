@@ -106,13 +106,17 @@ def resolve_surveycto_credentials_for_media(
     settings: Settings,
     session_token: str | None = None,
 ) -> tuple[str, str]:
-    if session_token:
-        _prune_sessions()
-        session = _SESSIONS.get(session_token)
-        if session:
-            return session.username, session.password
+    """Return only the server-managed SurveyCTO credentials for media requests.
 
+    Media playback must never depend on credentials entered by an application user.
+    ``session_token`` is retained only for backwards-compatible callers and is
+    intentionally ignored.
+    """
+    del session_token
     if settings.surveycto_username and settings.surveycto_password:
         return settings.surveycto_username, settings.surveycto_password
 
-    raise HTTPException(status_code=401, detail="Valid SurveyCTO credentials are required for media playback.")
+    raise HTTPException(
+        status_code=503,
+        detail="SurveyCTO media credentials are not configured on the server.",
+    )
