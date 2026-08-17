@@ -52,6 +52,59 @@ def _parameter_variable(parameters: Any, key: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _normalize_survey_columns(survey_df: pd.DataFrame) -> pd.DataFrame:
+    """Normalize legacy XLSForm headings without changing cell values.
+
+    Some of the category workbooks originated from older Excel files and carry
+    headings such as ``parameters `` or differently-cased variants.  Pandas keeps
+    those headings literally, which made ``row.get('parameters')`` silently return
+    an empty value even though SurveyCTO's ``s=``/``d=`` expression was present.
+    """
+    normalized: dict[Any, str] = {}
+    used: set[str] = set()
+    for column in survey_df.columns:
+        base = re.sub(r"\s+", " ", str(column or "").strip()).lower()
+        if not base:
+            base = str(column)
+        candidate = base
+        index = 2
+        while candidate in used:
+            candidate = f"{base}__{index}"
+            index += 1
+        used.add(candidate)
+        normalized[column] = candidate
+    return survey_df.rename(columns=normalized)
+
+
+def _fallback_source_variable(workspace_slug: str, variable_name: str) -> str:
+    """Recover known SurveyCTO audit sources when legacy parameter cells are blank.
+
+    This is intentionally conservative.  Most audio-audit variables encode their
+    source question after ``audio_audit_``.  Only the historical aliases that do
+    not match their source variable are handled explicitly.
+    """
+    variable = str(variable_name or "").strip()
+    lower = variable.lower()
+    if lower == "audiorecord1":
+        return "Q1a"
+    if not lower.startswith("audio_audit_"):
+        return ""
+
+    suffix = variable[len("audio_audit_") :]
+    alias_map = {
+        ("spread", "b1"): "B1",
+        ("spread", "CO_BAO1a"): "SP_BAU1a",
+        ("spread", "N_QC1"): "N_QC1",
+        ("edible-oil", "b1"): "B1",
+        ("edible-oil", "CO_BAO1a"): "CO_BAO1a",
+        ("edible-oil", "N_QC1"): "N_QC1",
+        ("breakfast-cereal", "b1"): "B1",
+        ("breakfast-cereal", "bau1y"): "SN_BAU1a",
+        ("breakfast-cereal", "N_QC1"): "N_QC1",
+    }
+    return alias_map.get((workspace_slug, suffix), suffix)
+
+
 @lru_cache(maxsize=4)
 def category_audio_definitions(root_dir: str) -> dict[str, list[dict[str, str]]]:
     """Load the Silent Listening audio variables directly from the three XLSForms.
@@ -69,6 +122,7 @@ def category_audio_definitions(root_dir: str) -> dict[str, list[dict[str, str]]]
             continue
         try:
             survey_df = pd.read_excel(xlsform, sheet_name="survey").fillna("")
+            survey_df = _normalize_survey_columns(survey_df)
         except Exception:
             continue
         columns = {str(column) for column in survey_df.columns}
@@ -94,12 +148,15 @@ def category_audio_definitions(root_dir: str) -> dict[str, list[dict[str, str]]]
             variable = str(row.get("name") or "").strip()
             if not variable or variable in seen:
                 continue
+
             source_variable = _parameter_variable(row.get("parameters"), "s")
             destination_variable = _parameter_variable(row.get("parameters"), "d")
+            if not source_variable:
+                source_variable = _fallback_source_variable(workspace_slug, variable)
 
             # A stale cross-category audit row occasionally survives in an XLSForm.
-            # If its declared source variable does not exist in that same instrument,
-            # it cannot produce a meaningful category recording and should not be shown.
+            # If its declared/recovered source variable does not exist in that same
+            # instrument, it cannot produce a meaningful category recording.
             if source_variable and source_variable not in variable_names:
                 continue
 
