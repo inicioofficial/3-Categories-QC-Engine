@@ -7,18 +7,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import psycopg
+import requests
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-import requests
-import pandas as pd
 
 from survey_platform.config import load_dotenv_file, read_env
 from survey_platform.workspaces import SurveyWorkspace, load_survey_workspaces
 
 
 SUBMISSION_KEY_FIELDS = ("KEY", "submission_key", "instanceID", "instance_id")
+AUDIO_EXTENSIONS = (".m4a", ".mp3", ".wav", ".amr", ".aac", ".ogg", ".oga", ".opus", ".3gp", ".mp4", ".webm")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".heic", ".heif")
+MEDIA_EXTENSIONS = AUDIO_EXTENSIONS + IMAGE_EXTENSIONS
 
 
 def _submission_key(record: dict[str, Any]) -> str:
@@ -155,7 +158,7 @@ def sync_all_category_forms(
     username = read_env("SURVEYCTO_USERNAME", dotenv)
     password = read_env("SURVEYCTO_PASSWORD", dotenv)
     try:
-        cooldown_seconds = max(0, int(read_env("CATEGORY_SYNC_COOLDOWN_SECONDS", dotenv, "240") or "240"))
+        cooldown_seconds = max(0, int(read_env("CATEGORY_SYNC_COOLDOWN_SECONDS", dotenv, "250") or "250"))
     except ValueError as exc:
         raise RuntimeError("CATEGORY_SYNC_COOLDOWN_SECONDS must be a whole number of seconds.") from exc
     if not database_url:
@@ -206,6 +209,38 @@ def _gps_parts(value: Any) -> tuple[float | None, float | None]:
 def _timestamp(value: Any) -> datetime | None:
     parsed = pd.to_datetime(value, errors="coerce", utc=True)
     return None if pd.isna(parsed) else parsed.to_pydatetime()
+
+
+def _media_type(variable: str, value: str) -> str | None:
+    variable_lower = str(variable or "").strip().lower()
+    value_lower = str(value or "").strip().lower()
+    path_lower = value_lower.split("?", 1)[0].split("#", 1)[0]
+    has_attachment_marker = "/attachments/" in value_lower or "file skipped from exports:" in value_lower
+    has_media_extension = path_lower.endswith(MEDIA_EXTENSIONS)
+    looks_like_audio_variable = any(token in variable_lower for token in ("audio", "recording", "radioplay", "radio_play"))
+
+    if not value_lower:
+        return None
+    if looks_like_audio_variable:
+        return "audio"
+    if path_lower.endswith(AUDIO_EXTENSIONS):
+        return "audio"
+    if path_lower.endswith(IMAGE_EXTENSIONS):
+        return "image"
+    if has_attachment_marker and has_media_extension:
+        return "audio" if path_lower.endswith(AUDIO_EXTENSIONS) else "image"
+    if "/attachments/" in value_lower:
+        # SurveyCTO attachment URLs occasionally omit a conventional extension.
+        # Keep them available instead of silently dropping reviewer evidence.
+        return "audio" if looks_like_audio_variable else "image"
+    return None
+
+
+def _media_file_name(value: str) -> str:
+    raw = str(value or "").strip()
+    if "File skipped from exports:" in raw:
+        raw = raw.split(":", 1)[1].strip()
+    return raw.replace("\\", "/").rsplit("/", 1)[-1].split("?", 1)[0].strip()
 
 
 def rebuild_category_operational_data(base_dir: Path | None = None) -> dict[str, Any]:
@@ -274,14 +309,27 @@ def rebuild_category_operational_data(base_dir: Path | None = None) -> dict[str,
                     """, (case_id, survey_month, form_version, workspace.slug, workspace.label, workspace.slug.upper().replace('-', '_')))
                     for variable, value in record.items():
                         text_value = str(value or "").strip()
-                        if not text_value or not ("/attachments/" in text_value or text_value.lower().endswith((".m4a", ".mp3", ".wav", ".amr", ".jpg", ".jpeg", ".png"))):
+                        media_type = _media_type(str(variable), text_value)
+                        if media_type is None:
                             continue
-                        media_type = "audio" if "audio" in variable.lower() or text_value.lower().endswith((".m4a", ".mp3", ".wav", ".amr")) else "image"
                         cur.execute("""
                             INSERT INTO clean.main_case_media (case_id, submission_key, survey_month, formdef_version, variable_name, media_type, file_name, surveycto_path)
                             VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-                            ON CONFLICT (case_id, variable_name) DO UPDATE SET surveycto_path=EXCLUDED.surveycto_path, updated_at=now()
-                        """, (case_id, submission_key, survey_month, form_version, variable, media_type, text_value.rsplit("/", 1)[-1], text_value))
+                            ON CONFLICT (case_id, variable_name) DO UPDATE SET
+                                media_type=EXCLUDED.media_type,
+                                file_name=EXCLUDED.file_name,
+                                surveycto_path=EXCLUDED.surveycto_path,
+                                updated_at=now()
+                        """, (
+                            case_id,
+                            submission_key,
+                            survey_month,
+                            form_version,
+                            variable,
+                            media_type,
+                            _media_file_name(text_value),
+                            text_value,
+                        ))
                         media_count += 1
                     case_count += 1
                 pipeline.__exit__(None, None, None)
