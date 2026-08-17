@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import secrets
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 import bcrypt
@@ -24,6 +25,7 @@ APP_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"}
 SUPERADMIN_ROLE = "SUPERADMIN"
 EDIT_ROLES = set(APP_ROLES)
 FINAL_APPROVER_ROLES = set(APP_ROLES)
+AUDIO_ADMIN_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN"}
 ROLE_ALIASES = {
     "admin": "SUPERADMIN",
     "data_engineer": "PDM-ADMIN",
@@ -33,6 +35,17 @@ ROLE_ALIASES = {
     "INICIO-PM": "INICIO-ADMIN",
     "PDM-PM": "PDM-ADMIN",
 }
+
+_CURRENT_REQUEST_USER: ContextVar[AuthUser | None] = ContextVar("current_request_user", default=None)
+_CURRENT_REQUEST_PATH: ContextVar[str] = ContextVar("current_request_path", default="")
+
+
+def current_request_user() -> AuthUser | None:
+    return _CURRENT_REQUEST_USER.get()
+
+
+def current_request_path() -> str:
+    return _CURRENT_REQUEST_PATH.get()
 
 
 def normalize_role(role: str | None) -> str:
@@ -179,6 +192,68 @@ def _unauthorized() -> HTTPException:
     )
 
 
+def _enforce_audio_reviewer_access(settings: Settings, user: AuthUser, request: Request) -> None:
+    """Prevent PDM-QC reviewers from seeing or mutating another reviewer's audio work."""
+    path = str(request.url.path).rstrip("/")
+    if not path.startswith("/api/main-survey/audio-listening"):
+        return
+
+    role = normalize_role(user.role)
+    if role in AUDIO_ADMIN_ROLES:
+        return
+    if role != "PDM-QC":
+        return
+
+    method = request.method.upper()
+    assignment_actions = (
+        path.endswith("/assign")
+        or path.endswith("/bulk-assign")
+        or path.endswith("/bulk-unassign")
+        or path.endswith("/unassign")
+    )
+    if assignment_actions and method in {"POST", "PUT", "PATCH", "DELETE"}:
+        raise HTTPException(status_code=403, detail="Only admins can manage Silent Listening assignments.")
+
+    if path == "/api/main-survey/audio-listening":
+        return
+
+    from backend.app.database import db_connection
+
+    with db_connection(settings) as conn:
+        with conn.cursor() as cur:
+            case_marker = "/api/main-survey/audio-listening/cases/"
+            if path.startswith(case_marker):
+                identifier = path[len(case_marker):].split("/", 1)[0]
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM clean.audio_listening al
+                    INNER JOIN clean.main_case mc ON mc.case_id = al.case_id
+                    WHERE (mc.case_id = %s OR mc.submission_key = %s)
+                      AND al.assigned_to_user_id = %s
+                    LIMIT 1
+                    """,
+                    (identifier, identifier, str(user.id)),
+                )
+            else:
+                suffix = path[len("/api/main-survey/audio-listening/"):]
+                audio_id = suffix.split("/", 1)[0]
+                if not audio_id or audio_id in {"assign", "bulk-assign", "bulk-unassign"}:
+                    return
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM clean.audio_listening al
+                    WHERE al.audio_id::text = %s
+                      AND al.assigned_to_user_id = %s
+                    LIMIT 1
+                    """,
+                    (audio_id, str(user.id)),
+                )
+            if not cur.fetchone():
+                raise HTTPException(status_code=404, detail="Silent Listening case not found.")
+
+
 def get_current_user(
     request: Request,
     authorization: str | None = Header(default=None),
@@ -256,6 +331,9 @@ def get_current_user(
         role=normalize_role(row["role"]),
     )
     request.state.current_user = current_user
+    _CURRENT_REQUEST_USER.set(current_user)
+    _CURRENT_REQUEST_PATH.set(str(request.url.path))
+    _enforce_audio_reviewer_access(settings, current_user, request)
     return current_user
 
 
