@@ -15,6 +15,7 @@ from backend.app.services.main_survey_cases import (
     run_main_qc,
 )
 from backend.app.settings import get_settings
+from survey_platform.category_audio_media import repair_category_audio_media
 from survey_platform.config import load_dotenv_file, read_env
 from survey_platform.etl.category_forms import rebuild_category_operational_data, sync_workspace
 from survey_platform.workspaces import load_survey_workspaces
@@ -110,15 +111,22 @@ def sync_category_forms_with_retry(settings) -> dict:
         # This keeps Main Data Explorer aligned with the category's latest successful
         # SurveyCTO pull even while the worker is waiting to pull later categories.
         latest_operational = rebuild_category_operational_data(settings.root_dir)
+        audio_media = repair_category_audio_media(
+            settings.root_dir,
+            database_url=settings.database_url,
+        )
+        latest_operational["audioMedia"] = audio_media
         published_cases = _published_workspace_case_count(latest_operational, workspace.slug)
         result["startedAt"] = started.isoformat()
         result["throttleRetries"] = throttle_retries
         result["publishedCases"] = published_cases
+        result["audioMedia"] = audio_media
         results.append(result)
         published_text = str(published_cases) if published_cases is not None else "unknown"
         print(
             f"ETL worker: published {workspace.slug} to operational tables "
-            f"({published_text} cases available to Data Explorer).",
+            f"({published_text} cases available to Data Explorer; "
+            f"{audio_media.get('audio', 0)} category audio attachment(s) reconciled).",
             flush=True,
         )
 
@@ -188,6 +196,27 @@ async def main() -> None:
     bootstrap_database(settings)
     bootstrap_main_rule_definitions(settings)
     bootstrap_main_case_status_reconciliation(settings)
+
+    # Repair the already-stored category media immediately on worker startup.  This
+    # makes a deploy fix existing Silent Listening cases even before the next
+    # SurveyCTO pull finishes (or if SurveyCTO is temporarily throttling).
+    try:
+        startup_audio_media = repair_category_audio_media(
+            settings.root_dir,
+            database_url=settings.database_url,
+        )
+        print(
+            f"ETL worker: startup category audio reconciliation completed "
+            f"({startup_audio_media.get('audio', 0)} audio attachment(s); "
+            f"{startup_audio_media.get('removed', 0)} stale row(s) removed).",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"ETL worker: startup category audio reconciliation failed: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
 
     tasks: list[asyncio.Task[None]] = []
 
