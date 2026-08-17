@@ -197,6 +197,27 @@ async def main() -> None:
     bootstrap_main_rule_definitions(settings)
     bootstrap_main_case_status_reconciliation(settings)
 
+    # Repair the already-stored category media immediately on worker startup.  This
+    # makes a deploy fix existing Silent Listening cases even before the next
+    # SurveyCTO pull finishes (or if SurveyCTO is temporarily throttling).
+    try:
+        startup_audio_media = repair_category_audio_media(
+            settings.root_dir,
+            database_url=settings.database_url,
+        )
+        print(
+            f"ETL worker: startup category audio reconciliation completed "
+            f"({startup_audio_media.get('audio', 0)} audio attachment(s); "
+            f"{startup_audio_media.get('removed', 0)} stale row(s) removed).",
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            f"ETL worker: startup category audio reconciliation failed: "
+            f"{type(exc).__name__}: {exc}",
+            flush=True,
+        )
+
     tasks: list[asyncio.Task[None]] = []
 
     if settings.auto_sync_enabled:
