@@ -52,6 +52,28 @@ def main_row_effective_datetime_sql(
     )
 
 
+def _append_audio_reviewer_scope(alias: str, conditions: list[str], params: list[Any]) -> None:
+    """Scope the Silent Listening collection to the signed-in PDM-QC reviewer."""
+    try:
+        from backend.app.auth import current_request_path, current_request_user, normalize_role
+
+        user = current_request_user()
+        path = current_request_path().rstrip("/")
+        if not user or normalize_role(user.role) != "PDM-QC":
+            return
+        if path != "/api/main-survey/audio-listening":
+            return
+        conditions.append(
+            f"EXISTS (SELECT 1 FROM clean.audio_listening scoped_al "
+            f"WHERE scoped_al.case_id = {alias}.case_id AND scoped_al.assigned_to_user_id = %s)"
+        )
+        params.append(str(user.id))
+    except Exception:
+        # Data scoping must remain usable for offline jobs and tests where there
+        # is no HTTP request context.
+        return
+
+
 def main_case_scope_clause(settings: Settings, alias: str, *, prefix: str = "AND") -> tuple[str, list[Any]]:
     formdef_versions = main_data_formdef_versions(settings)
     form_id = main_data_form_id(settings)
@@ -63,6 +85,7 @@ def main_case_scope_clause(settings: Settings, alias: str, *, prefix: str = "AND
     if formdef_versions and not active_workspace_form_id():
         conditions.append(f"{alias}.formdef_version = ANY(%s)")
         params.append(formdef_versions)
+    _append_audio_reviewer_scope(alias, conditions, params)
     if not conditions:
         return "", []
     return f"{prefix} {' AND '.join(conditions)}", params
