@@ -47,8 +47,18 @@ def _surveycto_throttle_wait_seconds(exc: BaseException) -> int | None:
     return max(1, int(match.group(1)))
 
 
+def _published_workspace_case_count(operational: dict, workspace_slug: str) -> int | None:
+    for item in operational.get("workspaces", []):
+        if str(item.get("workspace") or "") == workspace_slug:
+            try:
+                return int(item.get("cases") or 0)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
 def sync_category_forms_with_retry(settings) -> dict:
-    """Pull all category forms in sequence and retry SurveyCTO HTTP 417 throttles."""
+    """Pull category forms in sequence, retry throttles, and publish each successful pull immediately."""
     if not settings.database_url:
         raise RuntimeError("DATABASE_URL is required for category-sync.")
     if not settings.surveycto_username or not settings.surveycto_password:
@@ -57,6 +67,7 @@ def sync_category_forms_with_retry(settings) -> dict:
     cooldown_seconds = _category_cooldown_seconds(settings)
     workspaces = load_survey_workspaces(settings.root_dir)
     results: list[dict] = []
+    latest_operational: dict = {"status": "success", "workspaces": []}
 
     for index, workspace in enumerate(workspaces):
         started = datetime.now(timezone.utc)
@@ -95,9 +106,21 @@ def sync_category_forms_with_retry(settings) -> dict:
                 )
                 time.sleep(retry_wait)
 
+        # Publish the newly pulled submissions to clean.main_case immediately.
+        # This keeps Main Data Explorer aligned with the category's latest successful
+        # SurveyCTO pull even while the worker is waiting to pull later categories.
+        latest_operational = rebuild_category_operational_data(settings.root_dir)
+        published_cases = _published_workspace_case_count(latest_operational, workspace.slug)
         result["startedAt"] = started.isoformat()
         result["throttleRetries"] = throttle_retries
+        result["publishedCases"] = published_cases
         results.append(result)
+        published_text = str(published_cases) if published_cases is not None else "unknown"
+        print(
+            f"ETL worker: published {workspace.slug} to operational tables "
+            f"({published_text} cases available to Data Explorer).",
+            flush=True,
+        )
 
         if index < len(workspaces) - 1 and cooldown_seconds:
             next_workspace = workspaces[index + 1]
@@ -107,12 +130,11 @@ def sync_category_forms_with_retry(settings) -> dict:
             )
             time.sleep(cooldown_seconds)
 
-    operational = rebuild_category_operational_data(settings.root_dir)
-    return {"status": "success", "workspaces": results, "operational": operational}
+    return {"status": "success", "workspaces": results, "operational": latest_operational}
 
 
 def run_category_sync_cycle(settings) -> dict:
-    """Pull all category forms, rebuild operational data, then refresh marts."""
+    """Pull and publish all category forms, then run QC and refresh marts."""
     result = sync_category_forms_with_retry(settings)
     result["automaticQc"] = run_main_qc(settings, only_pending=False, batch_limit=None)
     result["operationalMarts"] = refresh_main_operational_marts(settings)
