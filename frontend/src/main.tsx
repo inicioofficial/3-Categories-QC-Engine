@@ -7,9 +7,9 @@ import './index.css'
 import App from './App'
 import { queryClient } from './lib/queryClient'
 
-// Keep every browser request workspace-aware, including file downloads that do
-// not go through apiFetch. Bulk case search is intentionally unpaged so a
-// pasted list returns the complete matching set instead of only the first 50.
+// Keep every API request workspace-aware, including file downloads that do not
+// go through apiFetch. Bulk case search is intentionally unpaged so a pasted
+// list returns the complete matching set instead of only the first 50.
 const nativeFetch = window.fetch.bind(window)
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const requestInput =
@@ -21,7 +21,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const headers = new Headers(request.headers)
   const workspace = window.sessionStorage.getItem('efina_platform_workspace')
 
-  if (workspace && url.origin === window.location.origin && url.pathname.startsWith('/api/') && !headers.has('X-Workspace')) {
+  if (workspace && url.pathname.startsWith('/api/') && !headers.has('X-Workspace')) {
     headers.set('X-Workspace', workspace)
   }
 
