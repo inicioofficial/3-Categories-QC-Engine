@@ -19,7 +19,7 @@ def test_surveycto_throttle_wait_seconds_uses_fallback_for_unstructured_417() ->
 def test_category_sync_retries_throttled_form_and_publishes_to_explorer(monkeypatch, tmp_path) -> None:
     workspace = SimpleNamespace(
         slug="edible-oil",
-        form_id="BHT_3_Category_Survey_Edible_oil_Wave_1",
+        form_id="BHT_3_Category_Survey_Edible_oil_Wave_2",
     )
     settings = SimpleNamespace(
         root_dir=tmp_path,
@@ -49,7 +49,7 @@ def test_category_sync_retries_throttled_form_and_publishes_to_explorer(monkeypa
         calls.append((args, kwargs))
         if len(calls) == 1:
             raise RuntimeError(
-                "SurveyCTO rejected form BHT_3_Category_Survey_Edible_oil_Wave_1 "
+                "SurveyCTO rejected form BHT_3_Category_Survey_Edible_oil_Wave_2 "
                 "with HTTP 417: Please wait for 10 seconds before retrying to pull all submissions for this form."
             )
         return {

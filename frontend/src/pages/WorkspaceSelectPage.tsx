@@ -27,7 +27,7 @@ export function WorkspaceSelectPage() {
             <div>
               <div className="mb-4 flex items-center gap-3">
                 <img src="/laptop%20(1).png" alt="Inicio Insights" className="h-16 w-24 object-contain" />
-                <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-sky-700">BHT Wave 1</span>
+                <span className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-bold uppercase tracking-[0.2em] text-sky-700">BHT Wave 2</span>
               </div>
               <h1 className="text-4xl font-black tracking-tight sm:text-5xl">Select a workspace</h1>
               <p className="mt-3 max-w-2xl text-base text-slate-600">Each category is connected to its own SurveyCTO form and isolated PostgreSQL schema.</p>

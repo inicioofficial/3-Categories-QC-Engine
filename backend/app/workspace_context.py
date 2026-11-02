@@ -6,9 +6,9 @@ from contextvars import ContextVar
 ACTIVE_WORKSPACE: ContextVar[str | None] = ContextVar("active_workspace", default=None)
 
 WORKSPACE_FORM_IDS = {
-    "spread": "BHT_3_Category_Survey_Spread_Wave_1",
-    "edible-oil": "BHT_3_Category_Survey_Edible_oil_Wave_1",
-    "breakfast-cereal": "BHT_3_Category_Survey_Breakfast_wave_1",
+    "spread": "BHT_3_Categories_Margarine_Wave_2",
+    "edible-oil": "BHT_3_Category_Survey_Edible_oil_Wave_2",
+    "breakfast-cereal": "BHT_3_Category_Survey_Breakfast_wave_2",
 }
 
 

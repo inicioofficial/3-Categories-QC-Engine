@@ -54,7 +54,7 @@ export function AppSidebar({ navGroups, module = "listing", onLogout, theme, onT
             </div>
             <div className="mt-2 min-w-0">
               <p className="truncate text-sm font-bold leading-tight text-slate-900">{workspace?.label ?? "BHT Platform"}</p>
-              <p className="mt-0.5 text-xs text-slate-500">Wave 1 · Nigeria 2026</p>
+              <p className="mt-0.5 text-xs text-slate-500">Wave 2 · Nigeria 2026</p>
             </div>
             <button type="button" onClick={() => navigate("/workspace-select")} className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-500 transition hover:border-sky-200 hover:text-sky-700">
               <ArrowLeftRight className="h-3 w-3" /> Change category

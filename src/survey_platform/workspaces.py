@@ -16,9 +16,9 @@ class SurveyWorkspace:
 
 
 WORKSPACE_DEFINITIONS = (
-    ("spread", "Spread Category", "spread", "BHT_3_Category_Survey_Spread_Wave_1", "BHT_3_Categories_Margarine_Wave_1_Updated_Script.xlsx"),
-    ("edible-oil", "Edible Oil Category", "edible_oil", "BHT_3_Category_Survey_Edible_oil_Wave_1", "BHT_3_Categories_Edible_Oil_Wave_1_Updated_Script.xlsx"),
-    ("breakfast-cereal", "Breakfast Cereal Category", "breakfast_cereal", "BHT_3_Category_Survey_Breakfast_wave_1", "BHT_3_Categories_Breakfast_Cereal_Wave_1_Updated_Script.xlsx"),
+    ("spread", "Spread Category", "spread", "BHT_3_Categories_Margarine_Wave_2", "BHT_3_Categories_Margarine_Wave_1_Updated_Script.xlsx"),
+    ("edible-oil", "Edible Oil Category", "edible_oil", "BHT_3_Category_Survey_Edible_oil_Wave_2", "BHT_3_Categories_Edible_Oil_Wave_1_Updated_Script.xlsx"),
+    ("breakfast-cereal", "Breakfast Cereal Category", "breakfast_cereal", "BHT_3_Category_Survey_Breakfast_wave_2", "BHT_3_Categories_Breakfast_Cereal_Wave_1_Updated_Script.xlsx"),
 )
 
 

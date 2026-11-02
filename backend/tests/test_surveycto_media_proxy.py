@@ -21,7 +21,7 @@ def test_bare_media_filename_tries_category_forms_with_server_credentials(monkey
 
     def fake_get(url, auth, headers, timeout):
         calls.append((url, auth, headers))
-        if "BHT_3_Category_Survey_Edible_oil_Wave_1" in url:
+        if "BHT_3_Category_Survey_Edible_oil_Wave_2" in url:
             return SimpleNamespace(
                 status_code=200,
                 content=b"media-bytes",
@@ -43,8 +43,8 @@ def test_bare_media_filename_tries_category_forms_with_server_credentials(monkey
     assert response_headers["Accept-Ranges"] == "bytes"
     assert calls
     assert all(auth == ("render-user", "render-password") for _, auth, _ in calls)
-    assert any("BHT_3_Category_Survey_Spread_Wave_1" in url for url, _, _ in calls)
-    assert any("BHT_3_Category_Survey_Edible_oil_Wave_1" in url for url, _, _ in calls)
+    assert any("BHT_3_Categories_Margarine_Wave_2" in url for url, _, _ in calls)
+    assert any("BHT_3_Category_Survey_Edible_oil_Wave_2" in url for url, _, _ in calls)
 
 
 def test_media_proxy_supports_range_fallback_for_seekable_audio(monkeypatch) -> None:
