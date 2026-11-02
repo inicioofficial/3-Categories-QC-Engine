@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import re
 import time
 from datetime import datetime, timezone
@@ -109,7 +108,7 @@ def sync_category_forms_with_retry(settings) -> dict:
 
         # Publish the newly pulled submissions to clean.main_case immediately.
         # This keeps Main Data Explorer aligned with the category's latest successful
-        # SurveyCTO pull even while the worker is waiting to pull later categories.
+        # SurveyCTO pull even while the sync is waiting to pull later categories.
         latest_operational = rebuild_category_operational_data(settings.root_dir)
         audio_media = repair_category_audio_media(
             settings.root_dir,
@@ -124,7 +123,7 @@ def sync_category_forms_with_retry(settings) -> dict:
         results.append(result)
         published_text = str(published_cases) if published_cases is not None else "unknown"
         print(
-            f"ETL worker: published {workspace.slug} to operational tables "
+            f"Category sync: published {workspace.slug} to operational tables "
             f"({published_text} cases available to Data Explorer; "
             f"{audio_media.get('audio', 0)} category audio attachment(s) reconciled).",
             flush=True,
@@ -159,7 +158,7 @@ async def scheduled_category_sync_loop() -> None:
         interval = max(300, int(settings.sync_interval_seconds or 3600))
         cycle_started = loop.time()
         try:
-            print("ETL worker: starting scheduled three-category SurveyCTO sync.", flush=True)
+            print("Category sync: starting scheduled three-category SurveyCTO sync.", flush=True)
             result = await asyncio.to_thread(run_category_sync_cycle, settings)
             counts = ", ".join(
                 f"{item['workspace']}={item['rows']}"
@@ -168,80 +167,64 @@ async def scheduled_category_sync_loop() -> None:
             retries = sum(int(item.get("throttleRetries") or 0) for item in result.get("workspaces", []))
             retry_note = f"; throttle retries={retries}" if retries else ""
             print(
-                f"ETL worker: category sync completed successfully ({counts}{retry_note}).",
+                f"Category sync: category sync completed successfully ({counts}{retry_note}).",
                 flush=True,
             )
         except Exception as exc:
-            print(f"ETL worker: scheduled category sync failed: {type(exc).__name__}: {exc}", flush=True)
+            print(f"Category sync: scheduled category sync failed: {type(exc).__name__}: {exc}", flush=True)
 
         elapsed = loop.time() - cycle_started
         delay = max(0.0, interval - elapsed)
         if delay:
             print(
-                f"ETL worker: next category sync in {delay:.0f} seconds "
+                f"Category sync: next category sync in {delay:.0f} seconds "
                 f"(start-to-start interval {interval} seconds).",
                 flush=True,
             )
             await asyncio.sleep(delay)
         else:
             print(
-                f"ETL worker: category sync took {elapsed:.0f} seconds, exceeding the "
+                f"Category sync: category sync took {elapsed:.0f} seconds, exceeding the "
                 f"{interval}-second interval; starting the next cycle immediately.",
                 flush=True,
             )
 
 
-async def main() -> None:
+async def run_category_sync_service() -> None:
+    """Background SurveyCTO sync owned by the web service (no standalone worker)."""
     settings = get_settings()
-    bootstrap_database(settings)
-    bootstrap_main_rule_definitions(settings)
-    bootstrap_main_case_status_reconciliation(settings)
+    if not settings.auto_sync_enabled:
+        print("Category sync: disabled by AUTO_SYNC_ENABLED=false.", flush=True)
+        return
 
-    # Repair the already-stored category media immediately on worker startup.  This
+    try:
+        await asyncio.to_thread(bootstrap_database, settings)
+        await asyncio.to_thread(bootstrap_main_rule_definitions, settings)
+        await asyncio.to_thread(bootstrap_main_case_status_reconciliation, settings)
+    except Exception as exc:
+        print(f"Category sync: startup bootstrap failed: {type(exc).__name__}: {exc}", flush=True)
+
+    # Repair the already-stored category media immediately on startup.  This
     # makes a deploy fix existing Silent Listening cases even before the next
     # SurveyCTO pull finishes (or if SurveyCTO is temporarily throttling).
     try:
-        startup_audio_media = repair_category_audio_media(
+        startup_audio_media = await asyncio.to_thread(
+            repair_category_audio_media,
             settings.root_dir,
             database_url=settings.database_url,
         )
         print(
-            f"ETL worker: startup category audio reconciliation completed "
+            f"Category sync: startup category audio reconciliation completed "
             f"({startup_audio_media.get('audio', 0)} audio attachment(s); "
             f"{startup_audio_media.get('removed', 0)} stale row(s) removed).",
             flush=True,
         )
     except Exception as exc:
         print(
-            f"ETL worker: startup category audio reconciliation failed: "
+            f"Category sync: startup category audio reconciliation failed: "
             f"{type(exc).__name__}: {exc}",
             flush=True,
         )
 
-    tasks: list[asyncio.Task[None]] = []
-
-    if settings.auto_sync_enabled:
-        print(f"ETL worker: three-category SurveyCTO sync enabled every {settings.sync_interval_seconds} seconds.")
-        tasks.append(asyncio.create_task(scheduled_category_sync_loop()))
-    else:
-        print("ETL worker: sync loops disabled by AUTO_SYNC_ENABLED=false.")
-
-    if not tasks:
-        print("ETL worker: no background loops enabled. Exiting.")
-        return
-
-    try:
-        await asyncio.gather(*tasks)
-    finally:
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("ETL worker stopped.")
+    print(f"Category sync: three-category SurveyCTO sync enabled every {settings.sync_interval_seconds} seconds.", flush=True)
+    await scheduled_category_sync_loop()

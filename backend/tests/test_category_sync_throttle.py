@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-import run_etl_worker as worker
+import backend.app.services.category_sync as worker
 
 
 def test_surveycto_throttle_wait_seconds_parses_requested_delay() -> None:

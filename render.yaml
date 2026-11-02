@@ -25,27 +25,7 @@ services:
         sync: false
       - key: QC_INTEGRATION_API_KEY
         sync: false
-      - key: AUTO_SYNC_ENABLED
-        value: "false"
-      - key: AUTO_EXPORT_ENABLED
-        value: "false"
-
-  - type: worker
-    name: three-categories-hourly-sync
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    dockerContext: .
-    dockerCommand: python run_etl_worker.py
-    plan: starter
-    envVars:
-      - key: DATABASE_URL
-        sync: false
-      - key: SURVEYCTO_SERVER
-        sync: false
-      - key: SURVEYCTO_USERNAME
-        sync: false
-      - key: SURVEYCTO_PASSWORD
-        sync: false
+      # The hourly SurveyCTO sync runs inside this web service (single uvicorn worker).
       - key: AUTO_SYNC_ENABLED
         value: "true"
       - key: SYNC_INTERVAL_SECONDS
@@ -54,3 +34,4 @@ services:
         value: "270"
       - key: AUTO_EXPORT_ENABLED
         value: "false"
+

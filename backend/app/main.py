@@ -30,6 +30,7 @@ from backend.app.services.listing import (
     bootstrap_listing_export_dictionary,
     bootstrap_rule_definitions,
 )
+from backend.app.services.category_sync import run_category_sync_service
 from backend.app.services.main_survey_cases import (
     bootstrap_main_case_status_reconciliation,
     bootstrap_main_rule_definitions,
@@ -121,24 +122,30 @@ async def _run_bootstraps_if_needed() -> None:
         database_ready = False
 
     if database_ready:
-        logger.info("Database already initialized; runtime mart refresh is owned by the ETL worker.")
+        logger.info("Database already initialized; runtime mart refresh is owned by the category sync.")
         return
 
     logger.info("Database not ready; running startup bootstraps in the background.")
     await _run_post_startup_bootstraps()
 
 
+async def _run_startup_background_tasks() -> None:
+    await _run_bootstraps_if_needed()
+    # Bootstraps finish first so the SurveyCTO sync never races them on a fresh database.
+    await run_category_sync_service()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    bootstrap_task = asyncio.create_task(_run_bootstraps_if_needed())
+    background_task = asyncio.create_task(_run_startup_background_tasks())
 
     try:
         yield
     finally:
-        if bootstrap_task and not bootstrap_task.done():
-            bootstrap_task.cancel()
+        if background_task and not background_task.done():
+            background_task.cancel()
             try:
-                await bootstrap_task
+                await background_task
             except asyncio.CancelledError:
                 pass
 
