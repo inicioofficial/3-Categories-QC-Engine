@@ -253,6 +253,9 @@ def rebuild_category_operational_data(base_dir: Path | None = None) -> dict[str,
     with psycopg.connect(database_url, row_factory=dict_row) as conn:
         with conn.cursor() as cur:
             for workspace in load_survey_workspaces(root):
+                # Categories that have not been pulled yet (e.g. first sync on a fresh
+                # database) get empty tables instead of aborting the whole rebuild.
+                ensure_workspace_schema(cur, workspace)
                 cur.execute(
                     sql.SQL("SELECT submission_key, form_id, formdef_version, raw_payload FROM {}.surveycto_submission").format(
                         sql.Identifier(workspace.schema)
