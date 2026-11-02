@@ -21,6 +21,10 @@ services:
         sync: false
       - key: ADMIN_SEED_PASSWORD
         sync: false
+      - key: MAIN_SURVEY_FORMDEF_VERSION
+        sync: false
+      - key: QC_INTEGRATION_API_KEY
+        sync: false
       - key: AUTO_SYNC_ENABLED
         value: "false"
       - key: AUTO_EXPORT_ENABLED
