@@ -29,9 +29,9 @@ from backend.app.services.qc_productivity import (
     normalize_qc_productivity_queue,
     summarize_qc_task_rows,
 )
-from backend.app.services.main_custom_table import _apply_label, _clean_label_text, _load_all_value_label_maps
+from backend.app.services.main_custom_table import CATEGORY_XLSFORM_FILES, _apply_label, _clean_label_text, _load_all_value_label_maps
 from backend.app.services.main_data_scope import main_case_effective_datetime_sql, main_case_scope_clause, main_data_form_id, main_row_effective_datetime_sql, main_row_scope_clause
-from backend.app.workspace_context import active_workspace_form_id
+from backend.app.workspace_context import ACTIVE_WORKSPACE, WORKSPACE_FORM_IDS, active_workspace_form_id
 from backend.app.services.main_survey import BHT_CATEGORY_BAU5A_PREFIX, BHT_CATEGORY_PANEL_MAP, BHT_PANEL_LABEL_BY_CODE, SECTOR_LABELS as MAIN_SECTOR_LABELS, _is_helper_variable, _load_dictionary
 from backend.app.settings import Settings
 
@@ -661,11 +661,18 @@ def _first_nonblank_record_value(record: dict[str, Any], field_names: tuple[str,
     return None
 
 
+RESPONDENT_FIRST_NAME_FIELDS = ("First_name", "F.Name", "name1")
+RESPONDENT_SURNAME_FIELDS = ("Surname", "S.Name")
+
+
 def _main_respondent_title_label(settings: Settings, value: Any) -> str | None:
     raw = str(value or "").strip()
     if not raw:
         return None
     label = _main_choice_label(settings, "Resp_Title", raw)
+    if (not label or label == raw) and re.fullmatch(r"[\d.]+", raw):
+        # An unlabelled title code (e.g. "1") is not a usable name part.
+        return None
     return label or raw
 
 
@@ -1815,7 +1822,7 @@ def list_main_cases(
         for key in category_keys
         if BHT_CATEGORY_PANEL_MAP[key].get("panelCode")
     ]
-    mart_sector_label_expr = _sector_label_sql("mc_src.record")
+    mart_sector_label_expr = _sector_label_sql("mc_src.record", str(settings.root_dir))
     if True:
         global MAIN_CASE_QUEUE_OPTIONS_CACHE
         mart_where: list[str] = ["1 = 1"]
@@ -2276,7 +2283,7 @@ def list_main_cases(
 
     panel_label_expr = _panel_label_sql("mcp.panel_code")
     city_label_expr = _city_label_sql("mc_all.record", str(settings.root_dir))
-    sector_label_expr = _sector_label_sql("mc.record")
+    sector_label_expr = _sector_label_sql("mc.record", str(settings.root_dir))
     filter_options_query = f"""
         SELECT
             ARRAY_REMOVE(ARRAY_AGG(DISTINCT city_name ORDER BY city_name), NULL) AS cities,
@@ -4617,27 +4624,76 @@ def _city_choice_label_map(root_dir: str) -> dict[str, str]:
     return labels
 
 
-def _city_label_sql(record_alias: str, root_dir: str) -> str:
-    raw_expr = f"{record_alias}->>'City_1'"
+@lru_cache(maxsize=8)
+def _category_choice_label_maps(root_dir: str, variable_name: str) -> dict[str, dict[str, str]]:
+    """{form_id: {code: label}} for a select_one variable in each category XLSForm.
+
+    The Wave 2 forms reuse codes with different labels (e.g. Region 3/4 and
+    every sector), so labels must be resolved per form.
+    """
+    result: dict[str, dict[str, str]] = {}
+    for slug, form_id in WORKSPACE_FORM_IDS.items():
+        filename = CATEGORY_XLSFORM_FILES.get(slug)
+        path = Path(root_dir) / "data" / "category_xlsforms" / str(filename or "")
+        if not filename or not path.exists():
+            continue
+        try:
+            survey_df = pd.read_excel(path, sheet_name="survey", dtype=str).fillna("")
+            choices_df = pd.read_excel(path, sheet_name="choices", dtype=str).fillna("")
+        except Exception:
+            continue
+        types = survey_df.loc[survey_df["name"].str.strip() == variable_name, "type"]
+        if types.empty or len(str(types.iloc[0]).split()) < 2:
+            continue
+        list_name = str(types.iloc[0]).split()[1]
+        labels: dict[str, str] = {}
+        for row in choices_df[choices_df["list_name"].str.strip() == list_name].to_dict(orient="records"):
+            code = str(row.get("name") or "").strip()
+            label = _clean_label_text(str(row.get("label") or "")).strip()
+            if code and label:
+                labels[code] = label
+        result[form_id] = labels
+    return result
+
+
+def _form_id_column(record_alias: str) -> str:
+    return f"{record_alias.rsplit('.', 1)[0]}.form_id" if "." in record_alias else "form_id"
+
+
+def _choice_label_case_sql(raw_expr: str, form_expr: str, category_maps: dict[str, dict[str, str]], fallback_map: dict[str, str]) -> str:
+    def q(value: Any) -> str:
+        return "'" + str(value).replace("'", "''") + "'"
+
     parts = []
-    for code, label in _city_choice_label_map(root_dir).items():
-        safe_code = code.replace("'", "''")
-        safe_label = label.replace("'", "''")
-        parts.append(f"WHEN '{safe_code}' THEN '{safe_label}'")
+    for form_id, labels in category_maps.items():
+        for code, label in labels.items():
+            parts.append(f"WHEN {form_expr} = {q(form_id)} AND {raw_expr} IN ({q(code)}, {q(code + '.0')}) THEN {q(label)}")
+    for code, label in fallback_map.items():
+        parts.append(f"WHEN {raw_expr} IN ({q(code)}, {q(str(code) + '.0')}) THEN {q(label)}")
     if not parts:
         return raw_expr
-    return f"CASE NULLIF(TRIM({raw_expr}), '') {' '.join(parts)} ELSE {raw_expr} END"
+    return f"CASE {' '.join(parts)} ELSE {raw_expr} END"
 
 
-def _sector_label_sql(record_alias: str) -> str:
-    raw_expr = f"{record_alias}->>'Sector'"
-    parts = []
-    for code, label in MAIN_SECTOR_LABELS.items():
-        safe_code = str(code).replace("'", "''")
-        safe_label = str(label).replace("'", "''")
-        parts.append(f"WHEN '{safe_code}' THEN '{safe_label}'")
-        parts.append(f"WHEN '{safe_code}.0' THEN '{safe_label}'")
-    return f"CASE NULLIF(TRIM({raw_expr}), '') {' '.join(parts)} ELSE {raw_expr} END"
+def _city_label_sql(record_alias: str, root_dir: str) -> str:
+    # Wave 1 stored the region in City_1; the Wave 2 category forms use Region.
+    raw_expr = f"COALESCE(NULLIF(TRIM({record_alias}->>'City_1'), ''), NULLIF(TRIM({record_alias}->>'Region'), ''))"
+    return _choice_label_case_sql(
+        raw_expr,
+        _form_id_column(record_alias),
+        _category_choice_label_maps(root_dir, "Region"),
+        _city_choice_label_map(root_dir),
+    )
+
+
+def _sector_label_sql(record_alias: str, root_dir: str = "") -> str:
+    raw_expr = f"COALESCE(NULLIF(TRIM({record_alias}->>'Sector'), ''), NULLIF(TRIM({record_alias}->>'sector'), ''))"
+    return _choice_label_case_sql(
+        raw_expr,
+        _form_id_column(record_alias),
+        _category_choice_label_maps(root_dir, "sector") if root_dir else {},
+        {str(code): str(label) for code, label in MAIN_SECTOR_LABELS.items()},
+    )
 
 
 @lru_cache(maxsize=8)
@@ -5021,13 +5077,42 @@ def _is_single_response_or_numeric_question(variable_name: str, dictionary_row: 
     return True
 
 
+CATEGORY_VERIFICATION_ADMIN_PATTERN = re.compile(
+    r"\b(may i (continue|take|proceed)|be recorded|recorded for|accompanied|supervisor|photo|consent)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_category_admin_question(question_label: str) -> bool:
+    """Consent and fieldwork-admin prompts the respondent cannot meaningfully recall."""
+    return bool(CATEGORY_VERIFICATION_ADMIN_PATTERN.search(_clean_label_text(question_label)))
+
+
 def _load_monthly_xlsform_verification_dictionary(root_dir: str) -> dict[str, list[dict[str, str]]]:
     dictionary_files = _latest_monthly_xlsform_files(root_dir)
     if not dictionary_files:
         return {}
+    path = dictionary_files[0]
+    return _load_xlsform_verification_dictionary(str(path), path.stat().st_mtime_ns)
 
-    survey_df = pd.read_excel(dictionary_files[0], sheet_name="survey").fillna("")
-    choices_df = pd.read_excel(dictionary_files[0], sheet_name="choices").fillna("")
+
+def _category_xlsform_verification_dictionary(root_dir: str, form_id: str | None) -> dict[str, list[dict[str, str]]] | None:
+    """Verification dictionary from the case's own category XLSForm, or None for non-category cases."""
+    slug = next((slug for slug, category_form_id in WORKSPACE_FORM_IDS.items() if category_form_id == form_id), None)
+    slug = slug or str(ACTIVE_WORKSPACE.get() or "").strip().lower()
+    filename = CATEGORY_XLSFORM_FILES.get(slug)
+    if not filename:
+        return None
+    path = Path(root_dir) / "data" / "category_xlsforms" / filename
+    if not path.exists():
+        return None
+    return _load_xlsform_verification_dictionary(str(path), path.stat().st_mtime_ns)
+
+
+@lru_cache(maxsize=8)
+def _load_xlsform_verification_dictionary(path: str, mtime_ns: int) -> dict[str, list[dict[str, str]]]:
+    survey_df = pd.read_excel(path, sheet_name="survey", dtype=str).fillna("")
+    choices_df = pd.read_excel(path, sheet_name="choices", dtype=str).fillna("")
     required = {"type", "name", "label"}
     if not required.issubset(set(str(col) for col in survey_df.columns)):
         return {}
@@ -5166,10 +5251,24 @@ def get_or_create_verification_questions(
             )
             case_sections = [dict(row) for row in cur.fetchall()]
 
-            try:
-                _, dictionary_by_section = _load_dictionary(str(settings.root_dir))
-            except Exception:
-                dictionary_by_section = _load_monthly_xlsform_verification_dictionary(str(settings.root_dir))
+            cur.execute(
+                "SELECT form_id FROM clean.main_case WHERE case_id = %s OR submission_key = %s LIMIT 1",
+                (case_id, case_id),
+            )
+            form_row = cur.fetchone()
+            # Category cases verify against their own Wave XLSForm; every
+            # select_one question in it is a valid recall candidate.
+            category_dictionary = _category_xlsform_verification_dictionary(
+                str(settings.root_dir), str((form_row or {}).get("form_id") or "") or None
+            )
+            is_category_case = category_dictionary is not None
+            if is_category_case:
+                dictionary_by_section = category_dictionary
+            else:
+                try:
+                    _, dictionary_by_section = _load_dictionary(str(settings.root_dir))
+                except Exception:
+                    dictionary_by_section = _load_monthly_xlsform_verification_dictionary(str(settings.root_dir))
             label_maps = _load_all_value_label_maps(str(settings.root_dir))
             if not case_sections:
                 cur.execute(
@@ -5224,7 +5323,9 @@ def get_or_create_verification_questions(
                         continue
                     if _is_multiselect_child(variable, variable_set):
                         continue
-                    if not _is_allowed_callback_verification_candidate(section_name, variable, selected_panel_codes, selected_prefixes):
+                    if not is_category_case and not _is_allowed_callback_verification_candidate(section_name, variable, selected_panel_codes, selected_prefixes):
+                        continue
+                    if is_category_case and _is_category_admin_question(str(dictionary_row.get("label") or "")):
                         continue
                     if not _is_single_response_or_numeric_question(variable, dictionary_row, section_rows):
                         continue
@@ -5234,10 +5335,12 @@ def get_or_create_verification_questions(
 
                     local_label_maps = label_maps
                     inline_labels = _inline_value_label_map(dictionary_row)
-                    if inline_labels and variable not in label_maps:
+                    if inline_labels and (is_category_case or variable not in label_maps):
                         local_label_maps = {**label_maps, variable: inline_labels}
                     answer_label = _answer_label_for_variable(merged_record, variable, section_rows, local_label_maps)
                     if not _meaningful_for_verification(answer_label):
+                        continue
+                    if is_category_case and inline_labels and re.fullmatch(r"[\d.\s/]+", answer_label):
                         continue
 
                     pool_rows.append(
@@ -5278,7 +5381,7 @@ def get_or_create_verification_questions(
                     (section_name, row, rows)
                     for section_name, rows in dictionary_by_section.items()
                     for row in rows
-                    if _is_allowed_callback_verification_candidate(
+                    if is_category_case or _is_allowed_callback_verification_candidate(
                         section_name,
                         str(row.get("variable") or ""),
                         selected_panel_codes,
@@ -5292,6 +5395,8 @@ def get_or_create_verification_questions(
                         continue
                     if _is_helper_variable(variable):
                         continue
+                    if is_category_case and _is_category_admin_question(str(dictionary_row.get("label") or "")):
+                        continue
                     variable_set = {str(row.get("variable") or "") for row in section_rows_for_dict if row.get("variable")}
                     if _is_multiselect_child(variable, variable_set):
                         continue
@@ -5301,10 +5406,12 @@ def get_or_create_verification_questions(
                         continue
                     local_label_maps = label_maps
                     inline_labels = _inline_value_label_map(dictionary_row)
-                    if inline_labels and variable not in label_maps:
+                    if inline_labels and (is_category_case or variable not in label_maps):
                         local_label_maps = {**label_maps, variable: inline_labels}
                     answer_label = _answer_label_for_variable(merged_record, variable, section_rows_for_dict, local_label_maps)
                     if not _meaningful_for_verification(answer_label):
+                        continue
+                    if is_category_case and inline_labels and re.fullmatch(r"[\d.\s/]+", answer_label):
                         continue
                     selected.append(
                         {
@@ -5437,11 +5544,11 @@ def get_callback_case_detail(
                        mq.case_id,
                        mq.ea_id,
                        COALESCE(NULLIF(TRIM(mq.ea_name), ''), mc.record->>'ea_name') AS ea_name,
-                       COALESCE(NULLIF(TRIM(mc.record->>'Sector'), ''), NULLIF(TRIM(mq.lga_name), ''), NULLIF(TRIM(mc.record->>'lga_name'), '')) AS lga_name,
+                       COALESCE(NULLIF(TRIM({_sector_label_sql("mc.record", str(settings.root_dir))}), ''), NULLIF(TRIM(mq.lga_name), ''), NULLIF(TRIM(mc.record->>'lga_name'), '')) AS lga_name,
                        COALESCE(NULLIF(TRIM(mq.state_name), ''), NULLIF(TRIM(mcd.state_name), ''), NULLIF(TRIM(mc.record->>'state_name'), '')) AS state_name,
                        COALESCE(NULLIF(TRIM(mc.record->>'accomp'), ''), NULLIF(TRIM(mc.record->>'supacc_confirm'), '')) AS supacc_confirm,
                        COALESCE(NULLIF(TRIM(mc.record->>'Take_pictures'), ''), NULLIF(TRIM(mc.record->>'sup_photo'), '')) AS sup_photo,
-                       NULLIF(TRIM(mc.record->>'Mobile'), '') AS phone_mobile,
+                       COALESCE(NULLIF(TRIM(mc.record->>'Mobile'), ''), NULLIF(TRIM(mc.record->>'Phone'), ''), NULLIF(TRIM(mc.record->>'phone1'), '')) AS phone_mobile,
                        mc.record,
                        mq.interviewer_id,
                        mq.supervisor_id,
@@ -5479,15 +5586,11 @@ def get_callback_case_detail(
             respondent_record = case_row.get("record") if isinstance(case_row.get("record"), dict) else {}
             respondent_name = _first_nonblank_record_value(
                 respondent_record,
-                (
-                    "Resp_Title",
-                    "First_name",
-                    "Surname",
-                ),
+                (*RESPONDENT_FIRST_NAME_FIELDS, *RESPONDENT_SURNAME_FIELDS),
             )
             respondent_title = _main_respondent_title_label(settings, _first_nonblank_record_value(respondent_record, ("Resp_Title",)))
-            respondent_first_name = _first_nonblank_record_value(respondent_record, ("First_name",))
-            respondent_surname = _first_nonblank_record_value(respondent_record, ("Surname",))
+            respondent_first_name = _first_nonblank_record_value(respondent_record, RESPONDENT_FIRST_NAME_FIELDS)
+            respondent_surname = _first_nonblank_record_value(respondent_record, RESPONDENT_SURNAME_FIELDS)
             respondent_name_parts = [respondent_title, respondent_first_name, respondent_surname]
             respondent_name = " ".join(part for part in respondent_name_parts if part).strip() or respondent_name
             respondent_address = _first_nonblank_record_value(
@@ -5511,15 +5614,11 @@ def get_callback_case_detail(
                 if isinstance(rec, dict):
                     respondent_name = respondent_name or _first_nonblank_record_value(
                         rec,
-                        (
-                            "Resp_Title",
-                            "First_name",
-                            "Surname",
-                        ),
+                        (*RESPONDENT_FIRST_NAME_FIELDS, *RESPONDENT_SURNAME_FIELDS),
                     )
                     section_title = _main_respondent_title_label(settings, _first_nonblank_record_value(rec, ("Resp_Title",)))
-                    section_first_name = _first_nonblank_record_value(rec, ("First_name",))
-                    section_surname = _first_nonblank_record_value(rec, ("Surname",))
+                    section_first_name = _first_nonblank_record_value(rec, RESPONDENT_FIRST_NAME_FIELDS)
+                    section_surname = _first_nonblank_record_value(rec, RESPONDENT_SURNAME_FIELDS)
                     section_name = " ".join(part for part in [section_title, section_first_name, section_surname] if part).strip()
                     respondent_name = section_name or respondent_name
                     respondent_address = respondent_address or _first_nonblank_record_value(
@@ -5538,7 +5637,7 @@ def get_callback_case_detail(
                     )
 
                 if "DEMOGRAPHICS" in sec_name or sec_name.startswith("E."):
-                    raw = rec.get("Mobile") or rec.get("phone.no") or rec.get("phoneno") or rec.get("phone_no")
+                    raw = rec.get("Mobile") or rec.get("Phone") or rec.get("phone1") or rec.get("phone.no") or rec.get("phoneno") or rec.get("phone_no")
                     if raw:
                         phone_no = str(raw)
 
