@@ -4406,7 +4406,10 @@ def refresh_bht_map_mart(settings: Settings) -> None:
     gender_labels_json = json.dumps(BHT_OVERVIEW_DISTRIBUTIONS["gender"]["labels"])
     sec_labels_json = json.dumps(_choice_labels_for_variable(settings, "SEC"))
     age_labels_json = json.dumps(_choice_labels_for_variable(settings, "Age_cal"))
-    m_scope_clause, m_scope_params = main_case_scope_clause(settings, "m")
+    # Shared storage for all three category workspaces, rebuilt by the
+    # background sync with no active workspace. Request-time queries apply the
+    # workspace form_id filter, so the rebuild must not be scoped here.
+    m_scope_clause, m_scope_params = "", []
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
             # This materialization runs in the ETL workflow and can exceed the

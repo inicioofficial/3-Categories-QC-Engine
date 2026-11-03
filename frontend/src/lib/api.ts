@@ -812,12 +812,13 @@ export async function downloadFile(path: string, fileName: string, token: string
     const base = candidates[index]
 
     try {
-      const response = await fetch(`${base}${path}`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'X-Device-Id': getOrCreateDeviceId(),
-        },
-      })
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+        'X-Device-Id': getOrCreateDeviceId(),
+      }
+      const workspace = typeof window !== 'undefined' ? window.sessionStorage.getItem('efina_platform_workspace') : null
+      if (workspace) headers['X-Workspace'] = workspace
+      const response = await fetch(`${base}${path}`, { headers })
 
       if (!response.ok) {
         const canRetryWithNextCandidate =
