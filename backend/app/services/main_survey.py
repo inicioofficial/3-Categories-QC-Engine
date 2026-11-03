@@ -25,7 +25,7 @@ from psycopg import sql as psql
 from backend.app.auth import AuthUser
 from backend.app.database import db_connection
 from backend.app.etl_bridge import describe_sync_failure, run_main_survey_sync_job
-from backend.app.services.main_data_scope import main_case_scope_clause, main_row_scope_clause
+from backend.app.services.main_data_scope import main_case_scope_clause, main_case_scope_condition, main_row_scope_clause
 from backend.app.settings import Settings
 from backend.app.sync_lock import survey_sync_lock_wait
 from backend.app.workspace_context import ACTIVE_WORKSPACE
@@ -2066,8 +2066,10 @@ def _get_section_record_counts(settings: Settings, user: AuthUser) -> dict[str, 
     if not settings.database_url:
         return {}
 
+    scope_sql, scope_params = main_case_scope_condition(settings, "c")
     where_parts: list[str] = [
-        "NOT EXISTS (SELECT 1 FROM clean.deleted_main_cases dmc WHERE dmc.submission_key = c.submission_key)"
+        "NOT EXISTS (SELECT 1 FROM clean.deleted_main_cases dmc WHERE dmc.submission_key = c.submission_key)",
+        scope_sql,
     ]
     where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
 
@@ -2083,6 +2085,7 @@ def _get_section_record_counts(settings: Settings, user: AuthUser) -> dict[str, 
                     {where_sql}
                     GROUP BY s.section_name
                     """,
+                    scope_params,
                 )
                 rows = cur.fetchall()
     except Exception:
@@ -2101,11 +2104,13 @@ def _load_section_records(
         return []
 
     filters = filters or {}
+    scope_sql, scope_params = main_case_scope_condition(settings, "c")
     where_parts = [
         "s.section_name = %s",
         "NOT EXISTS (SELECT 1 FROM clean.deleted_main_cases dmc WHERE dmc.submission_key = c.submission_key)",
+        scope_sql,
     ]
-    params: list[Any] = [section_name]
+    params: list[Any] = [section_name, *scope_params]
 
     # State filter — join to geo reference table via ea_id
     if filters.get("states"):
@@ -2532,7 +2537,7 @@ def get_main_survey_overview(settings: Settings, user: AuthUser) -> dict[str, An
 
 def get_main_survey_state_ea_summary(settings: Settings, user: AuthUser) -> dict[str, Any]:
     """Return state-level and EA-level case counts with accompaniment stats."""
-    approved_only_sql = ""
+    approved_only_sql, scope_params = main_row_scope_clause(settings, "d")
     try:
         with db_connection(settings) as conn:
             with conn.cursor() as cur:
@@ -2586,7 +2591,7 @@ def get_main_survey_state_ea_summary(settings: Settings, user: AuthUser) -> dict
                     (state_name, ea_id, ea_name, target_cases)
                 )
                 ORDER BY row_level DESC, state_name, ea_name
-            """)
+            """, scope_params)
                 state_rows = []
                 ea_rows = []
                 for raw_row in cur.fetchall():
@@ -2642,10 +2647,11 @@ def get_main_survey_answer_breakdown(
     section_name: str = config["section"]
 
     status_values = [str(item).strip().lower() for item in (statuses or []) if str(item).strip()]
-    stage_sql = psql.SQL("")
-    stage_params: list[Any] = []
+    scope_sql, scope_params = main_case_scope_condition(settings, "mc")
+    stage_sql = psql.SQL(" AND ") + psql.SQL(scope_sql) + psql.SQL(" ")
+    stage_params: list[Any] = list(scope_params)
     if status_values:
-        stage_sql = psql.SQL(" AND LOWER(COALESCE(mc.approval_stage, '')) = ANY(%s) ")
+        stage_sql += psql.SQL(" AND LOWER(COALESCE(mc.approval_stage, '')) = ANY(%s) ")
         stage_params.append(status_values)
     code_candidates: list[str] = [str(code)]
     code_text = str(code).strip()
@@ -2731,11 +2737,12 @@ def get_filter_options(settings: Settings, user: AuthUser) -> dict[str, list[str
     if not settings.database_url:
         return {"states": [], "genders": [], "maritalStatuses": [], "educationLevels": []}
 
+    scope_sql, scope_params = main_case_scope_clause(settings, "m")
     try:
         with db_connection(settings) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT g.state_name
                     FROM clean.main_case m
                     JOIN reference.geo_boundaries_ea g ON g.ea_id = COALESCE(m.ea_id, m.record->>'ea_id')
@@ -2745,13 +2752,15 @@ def get_filter_options(settings: Settings, user: AuthUser) -> dict[str, list[str
                           FROM clean.deleted_main_cases dmc
                           WHERE dmc.submission_key = m.submission_key
                       )
+                      {scope_sql}
                     ORDER BY g.state_name
-                    """
+                    """,
+                    scope_params,
                 )
                 states = [row["state_name"] for row in cur.fetchall()]
 
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT
                         mcs.record->>%s AS gender,
                         mcs.record->>%s AS marital_status,
@@ -2765,8 +2774,9 @@ def get_filter_options(settings: Settings, user: AuthUser) -> dict[str, list[str
                           FROM clean.deleted_main_cases dmc
                           WHERE dmc.submission_key = m.submission_key
                       )
+                      {scope_sql}
                     """,
-                    (DEMO_GENDER_FIELD, DEMO_MARITAL_FIELD, DEMO_EDUCATION_FIELD, DEMO_SECTION_NAME),
+                    (DEMO_GENDER_FIELD, DEMO_MARITAL_FIELD, DEMO_EDUCATION_FIELD, DEMO_SECTION_NAME, *scope_params),
                 )
                 gender_values, marital_values, education_values = set(), set(), set()
                 for row in cur.fetchall():
@@ -2778,7 +2788,7 @@ def get_filter_options(settings: Settings, user: AuthUser) -> dict[str, list[str
                         education_values.add(str(row["education_level"]))
 
                 cur.execute(
-                    """
+                    f"""
                     SELECT DISTINCT NULLIF(TRIM(m.record->>'final_outcome_code'), '') AS final_outcome_code
                     FROM clean.main_case m
                     WHERE NULLIF(TRIM(m.record->>'final_outcome_code'), '') IS NOT NULL
@@ -2787,8 +2797,10 @@ def get_filter_options(settings: Settings, user: AuthUser) -> dict[str, list[str
                           FROM clean.deleted_main_cases dmc
                           WHERE dmc.submission_key = m.submission_key
                       )
+                      {scope_sql}
                     ORDER BY final_outcome_code
-                    """
+                    """,
+                    scope_params,
                 )
                 final_outcomes = [row["final_outcome_code"] for row in cur.fetchall() if row.get("final_outcome_code")]
 
@@ -2925,6 +2937,9 @@ def get_main_overview_demographics(
     months_sel = [str(m).strip() for m in (months or []) if str(m).strip()]
     states_sel = [str(s).strip() for s in (states or []) if str(s).strip()]
     appr, appr_params = _overview_approval_clause(user, "d")
+    scope_sql, scope_params = main_row_scope_clause(settings, "d")
+    appr = f"{appr} {scope_sql}"
+    appr_params = [*appr_params, *scope_params]
     month_sql = " AND d.interview_month = ANY(%s) " if months_sel else ""
     state_sql = " AND d.state_name = ANY(%s) " if states_sel else ""
     base_params = list(appr_params)
@@ -5300,6 +5315,7 @@ def build_main_survey_wide_export_dataframe(
     final_outcome_codes: list[str] | None = None,
 ) -> pd.DataFrame:
     """Case-level wide export: dictionary column order × values from clean.main_case.record jsonb."""
+    scope_sql, scope_params = main_case_scope_clause(settings, "m")
     order, _labels, _measures, _dw, _sw, _vl = _main_export_column_meta(str(settings.root_dir))
     if not order:
         order = [
@@ -5376,9 +5392,10 @@ def build_main_survey_wide_export_dataframe(
                 ) qc ON TRUE
                 WHERE {status_clause}
                   {final_outcome_clause}
+                  {scope_sql}
                 ORDER BY m.submitted_at DESC NULLS LAST
                 """,
-                tuple(status_params),
+                tuple([*status_params, *scope_params]),
             )
             rows = cur.fetchall()
             case_ids = [str(row.get("case_id") or "").strip() for row in rows if str(row.get("case_id") or "").strip()]
@@ -5462,6 +5479,7 @@ def build_main_survey_case_export_dataframe(
     final_outcomes = [str(item).strip() for item in (final_outcome_codes or []) if str(item).strip()]
     final_outcome_clause = ""
     params: list[Any] = [allowed_statuses]
+    scope_sql, scope_params = main_case_scope_clause(settings, "m")
     if final_outcomes:
         final_outcome_clause = "AND TRIM(COALESCE(m.record->>'final_outcome_code', '')) = ANY(%s)"
         params.append(final_outcomes)
@@ -5508,9 +5526,10 @@ def build_main_survey_case_export_dataframe(
                 ) qc ON TRUE
                 WHERE m.approval_stage = ANY(%s)
                   {final_outcome_clause}
+                  {scope_sql}
                 ORDER BY m.submitted_at DESC NULLS LAST
                 """,
-                tuple(params),
+                tuple([*params, *scope_params]),
             )
             rows = cur.fetchall()
 
@@ -5744,11 +5763,12 @@ def get_main_survey_ea_overview(settings: Settings, user: AuthUser, ea_id: str) 
     if not normalized_ea_id:
         raise HTTPException(status_code=400, detail="EA ID is required.")
 
+    scope_sql, scope_params = main_case_scope_clause(settings, "mc")
     with db_connection(settings) as conn:
         postgis = _has_postgis(conn)
         with conn.cursor() as cur:
             cur.execute(
-                """
+                f"""
                 SELECT
                     mc.submission_key,
                     mc.case_id,
@@ -5788,9 +5808,10 @@ def get_main_survey_ea_overview(settings: Settings, user: AuthUser, ea_id: str) 
                       FROM clean.deleted_main_cases dmc
                       WHERE dmc.submission_key = mc.submission_key
                   )
+                  {scope_sql}
                 ORDER BY mc.submitted_at DESC NULLS LAST, mc.submission_key
                 """,
-                (normalized_ea_id,),
+                (normalized_ea_id, *scope_params),
             )
             rows = [dict(row) for row in cur.fetchall()]
             if not rows:
