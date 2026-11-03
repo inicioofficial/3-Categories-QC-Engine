@@ -18,6 +18,18 @@ def _normalize_email(email: str | None) -> str | None:
     return value or None
 
 
+def _ensure_role_registered(cur: Any, role: str) -> None:
+    """Make a valid application role available before assigning it to a user."""
+    cur.execute(
+        """
+        INSERT INTO app.role (role_code, role_name)
+        VALUES (%s, %s)
+        ON CONFLICT (role_code) DO NOTHING
+        """,
+        (role, role),
+    )
+
+
 def _assert_user_manager(actor_role: str | None) -> str:
     role = normalize_role(actor_role)
     if role not in USER_MANAGEMENT_ROLES:
@@ -86,7 +98,7 @@ def list_users_by_role(settings: Settings, role: str) -> list[dict[str, Any]]:
     role = normalize_role(role)
     if role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Invalid role '{role}'.")
-    
+
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -102,7 +114,7 @@ def list_users_by_role(settings: Settings, role: str) -> list[dict[str, Any]]:
                 WHERE ur.role_code = %s AND ua.is_active = true AND ua.username IS NOT NULL
                 ORDER BY ua.full_name
                 """,
-                (role,)
+                (role,),
             )
             rows = cur.fetchall()
 
@@ -138,6 +150,7 @@ def create_user(
 
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
+            _ensure_role_registered(cur, role)
             cur.execute(
                 "SELECT user_id FROM app.user_account WHERE username = %s",
                 (username.strip(),),
@@ -203,6 +216,7 @@ def update_user(
 
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
+            _ensure_role_registered(cur, role)
             cur.execute(
                 """
                 SELECT
@@ -254,7 +268,6 @@ def update_user(
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="User not found.")
 
-            # Replace role
             cur.execute("DELETE FROM app.user_role WHERE user_id = %s::uuid", (user_id,))
             cur.execute(
                 """

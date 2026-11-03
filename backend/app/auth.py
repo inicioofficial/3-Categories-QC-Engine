@@ -21,10 +21,14 @@ class AuthUser:
     email: str
 
 
-APP_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"}
+APP_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC", "INICIO-QC"}
 SUPERADMIN_ROLE = "SUPERADMIN"
-EDIT_ROLES = set(APP_ROLES)
-FINAL_APPROVER_ROLES = set(APP_ROLES)
+# INICIO-QC is a deliberately narrow role. It can authenticate and enter the two
+# assignment workspaces through the scoped require_roles exception below, but it
+# must not inherit the platform-wide edit/final-approval permissions granted to
+# the pre-existing roles.
+EDIT_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"}
+FINAL_APPROVER_ROLES = set(EDIT_ROLES)
 AUDIO_ADMIN_ROLES = {"SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN"}
 ROLE_ALIASES = {
     "admin": "SUPERADMIN",
@@ -35,6 +39,11 @@ ROLE_ALIASES = {
     "INICIO-PM": "INICIO-ADMIN",
     "PDM-PM": "PDM-ADMIN",
 }
+
+QC_SECTION_PREFIXES = (
+    "/api/main-survey/callbacks",
+    "/api/main-survey/audio-listening",
+)
 
 _CURRENT_REQUEST_USER: ContextVar[AuthUser | None] = ContextVar("current_request_user", default=None)
 _CURRENT_REQUEST_PATH: ContextVar[str] = ContextVar("current_request_path", default="")
@@ -346,7 +355,15 @@ def require_roles(*roles: str):
         user: AuthUser = Depends(get_current_user),
         settings: Settings = Depends(get_settings),
     ) -> AuthUser:
-        if normalized_roles and user.role not in normalized_roles:
+        # INICIO-QC is intentionally limited to the two QC assignment workspaces.
+        # Some existing route declarations enumerate PDM-QC explicitly; this scoped
+        # exception lets INICIO-QC enter only these paths, while service-level checks
+        # still enforce per-user case ownership.
+        inicio_qc_section_access = (
+            user.role == "INICIO-QC"
+            and any(str(request.url.path).startswith(prefix) for prefix in QC_SECTION_PREFIXES)
+        )
+        if normalized_roles and user.role not in normalized_roles and not inicio_qc_section_access:
             from backend.app.activity_log import infer_module_from_path, log_activity
 
             log_activity(

@@ -61,6 +61,15 @@ function CategoryGate({ children }: { children: ReactNode }) {
 
 function AppRoutes() {
   const location = useLocation();
+  const { user } = useAuth();
+  const [routeWorkspace, routeSection] = location.pathname.split("/").filter(Boolean);
+  const inicioQcWorkspace = routeSection === "callbacks" || routeSection === "audio-listening";
+
+  // INICIO-QC only works its assigned Respondent Recontact and Silent Listening cases.
+  if (user?.role === "INICIO-QC" && !inicioQcWorkspace && location.pathname !== "/login" && location.pathname !== "/workspace-select") {
+    const target = CATEGORY_ROUTES.has(routeWorkspace as WorkspaceModule) ? `/${routeWorkspace}/callbacks` : "/workspace-select";
+    return <Navigate to={target} replace />;
+  }
 
   return (
     <Routes location={location} key={location.pathname}>
@@ -214,7 +223,7 @@ function AppRoutes() {
             path="/main/callbacks/:caseId/detail"
             element={
               <WorkspaceRoute workspace="main">
-                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"]}>
+                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC", "INICIO-QC"]}>
                   <CallbackDetailPage />
                 </RoleRoute>
               </WorkspaceRoute>
@@ -224,7 +233,7 @@ function AppRoutes() {
             path="/main/callbacks"
             element={
               <WorkspaceRoute workspace="main">
-                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"]}>
+                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC", "INICIO-QC"]}>
                   <CallbackManagementPage />
                 </RoleRoute>
               </WorkspaceRoute>
@@ -234,7 +243,7 @@ function AppRoutes() {
             path="/main/audio-listening"
             element={
               <WorkspaceRoute workspace="main">
-                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"]}>
+                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC", "INICIO-QC"]}>
                   <AudioListeningPage />
                 </RoleRoute>
               </WorkspaceRoute>
@@ -244,7 +253,7 @@ function AppRoutes() {
             path="/main/audio-listening/:caseId/detail"
             element={
               <WorkspaceRoute workspace="main">
-                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC"]}>
+                <RoleRoute allowedRoles={["SUPERADMIN", "INICIO-ADMIN", "PDM-ADMIN", "PDM-QC", "INICIO-QC"]}>
                   <AudioListeningDetailPage />
                 </RoleRoute>
               </WorkspaceRoute>

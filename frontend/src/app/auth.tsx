@@ -63,7 +63,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(payload.token);
     setUser(payload.user);
     setSelectedWorkspace(null);
-    prefetchPostLoginData(payload.token);
+    if (payload.user.role !== "INICIO-QC") {
+      prefetchPostLoginData(payload.token);
+    }
     return payload.user;
   }
 

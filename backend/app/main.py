@@ -19,6 +19,17 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from backend.app.activity_log import bootstrap_activity_log
 from backend.app.auth import AuthUser, require_roles
 from backend.app.database import bootstrap_database, database_ready_for_startup, db_connection
+from backend.app.services.inicio_qc_export_scope import install_inicio_qc_export_scope
+from backend.app.services.inicio_qc_route_scope import enforce_inicio_qc_route_scope
+from backend.app.services.qc_assignment_scope import bootstrap_qc_assignment_scope, install_qc_assignment_scope
+from backend.app.services.qc_assignment_decision_scope import install_qc_assignment_decision_scope
+
+# The existing case router (and the category audio detail route below) import these
+# service functions by name. Install the scoped implementations before importing
+# them so every QC route uses the server-side PDM/INICIO assignment boundary.
+install_qc_assignment_scope()
+install_qc_assignment_decision_scope()
+
 from backend.app.routers.auth import router as auth_router
 from backend.app.routers.integration import router as integration_router
 from backend.app.routers.listing import router as listing_router
@@ -39,6 +50,8 @@ from backend.app.services.main_survey_cases import (
 from backend.app.services.surveycto_credentials import resolve_surveycto_credentials_for_media
 from backend.app.settings import get_settings
 from backend.app.workspace_context import ACTIVE_WORKSPACE, WORKSPACE_FORM_IDS
+
+install_inicio_qc_export_scope(main_survey_router)
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +87,7 @@ async def _run_post_startup_bootstraps() -> None:
         return
 
     bootstrap_steps = [
+        ("QC assignment scope", bootstrap_qc_assignment_scope),
         ("listing export dictionary", bootstrap_listing_export_dictionary),
         ("listing rule definitions", bootstrap_rule_definitions),
         ("listing case reconciliation", bootstrap_listing_case_status_reconciliation),
@@ -122,6 +136,10 @@ async def _run_bootstraps_if_needed() -> None:
         database_ready = False
 
     if database_ready:
+        try:
+            await asyncio.to_thread(bootstrap_qc_assignment_scope, settings)
+        except Exception:
+            logger.exception("QC assignment scope bootstrap failed on initialized database.")
         logger.info("Database already initialized; runtime mart refresh is owned by the category sync.")
         return
 
@@ -156,6 +174,7 @@ def _run_startup_bootstraps_sync(settings) -> None:
         raise RuntimeError("Database bootstrap finished but required tables are still missing.")
 
     bootstrap_steps = [
+        ("QC assignment scope", bootstrap_qc_assignment_scope),
         ("listing export dictionary", bootstrap_listing_export_dictionary),
         ("listing rule definitions", bootstrap_rule_definitions),
         ("listing case reconciliation", bootstrap_listing_case_status_reconciliation),
@@ -542,6 +561,7 @@ app = FastAPI(
     summary="Listing ETL, QC, dashboards, exports, and map APIs for INICIO.",
     lifespan=lifespan,
 )
+app.middleware("http")(enforce_inicio_qc_route_scope)
 
 
 @app.middleware("http")

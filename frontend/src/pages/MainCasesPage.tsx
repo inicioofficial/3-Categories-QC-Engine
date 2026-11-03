@@ -87,6 +87,7 @@ type AssignmentConfirmState = { action: "callback" | "audio"; role: string; user
 
 const QC_ROLES = [
   { value: "PDM-QC", label: "PDM-QC" },
+  { value: "INICIO-QC", label: "INICIO-QC" },
 ] as const;
 
 type MainCaseRowProps = {
@@ -517,12 +518,18 @@ export function MainCasesPage() {
     }
   }, [page, totalPages]);
 
+  const availableQcRoles = useMemo(() => {
+    if (user?.role === "SUPERADMIN") return QC_ROLES;
+    if (user?.role === "PDM-ADMIN") return QC_ROLES.filter((role) => role.value === "PDM-QC");
+    if (user?.role === "INICIO-ADMIN") return QC_ROLES.filter((role) => role.value === "INICIO-QC");
+    return [];
+  }, [user?.role]);
 
   const canBulkSelect = Boolean(user);
   const canBulkApprove = canBulkSelect;
   const canBulkDelete = Boolean(user);
-  const canBulkAssignQueues = canBulkSelect;
-  const canUnassignQueues = canBulkAssignQueues && user?.role !== "PDM-QC";
+  const canBulkAssignQueues = availableQcRoles.length > 0;
+  const canUnassignQueues = canBulkAssignQueues;
   const allSelected = items.length > 0 && items.every((i) => selectedKeys.has(i.submission_key));
   const someSelected = selectedKeys.size > 0;
   const selectedItems = useMemo(() => items.filter((item) => selectedKeys.has(item.submission_key)), [items, selectedKeys]);
@@ -550,11 +557,11 @@ export function MainCasesPage() {
   }, []);
   const openPushModal = useCallback((type: PushModalType) => {
     startTransition(() => {
-      setSelectedRole("PDM-QC");
+      setSelectedRole(availableQcRoles[0]?.value ?? "");
       setSelectedUserId("");
       setPushModalType(type);
     });
-  }, []);
+  }, [availableQcRoles]);
 
   const openDeleteModal = useCallback(() => {
     startTransition(() => {
@@ -681,6 +688,7 @@ export function MainCasesPage() {
     try {
       let keys = overrideKeys ?? Array.from(selectedKeys);
       let selectedCount = keys.length;
+      const targetRole = role ?? availableQcRoles[0]?.value ?? "";
       if ((action === "callback" || action === "audio") && !skipAssignedPrompt) {
         const selected = items.filter((item) => keys.includes(item.submission_key));
         const isAssigned = (item: MainCaseListItem) => action === "callback" ? item.has_callback_history : item.has_audio_history;
@@ -688,7 +696,7 @@ export function MainCasesPage() {
         const assigned = selected.length - unassignedKeys.length;
         if (assigned > 0) {
           setBulk(null);
-          setAssignmentConfirm({ action, role: role ?? "PDM-QC", userId: userId ?? "", assigned, unassignedKeys });
+          setAssignmentConfirm({ action, role: targetRole, userId: userId ?? "", assigned, unassignedKeys });
           return;
         }
         keys = unassignedKeys;
@@ -756,7 +764,7 @@ export function MainCasesPage() {
             method: "POST",
             body: JSON.stringify({
               submission_keys: keys,
-              assigned_to_role: role ?? "PDM-QC",
+              assigned_to_role: targetRole,
               assigned_to_user_id: userId,
             }),
           },
@@ -767,7 +775,7 @@ export function MainCasesPage() {
         setBulk({
           action,
           saving: false,
-          result: `${selectedCount} case(s) pushed to Silent Listening Section${role ? ` for ${QC_ROLES.find(r => r.value === role)?.label || role}` : ""}.`,
+          result: `${selectedCount} case(s) pushed to Silent Listening Section${targetRole ? ` for ${QC_ROLES.find(r => r.value === targetRole)?.label || targetRole}` : ""}.`,
         });
       } else {
         await apiFetch(
@@ -776,7 +784,7 @@ export function MainCasesPage() {
             method: "POST",
             body: JSON.stringify({
               submission_keys: keys,
-              assigned_to_role: role ?? "PDM-QC",
+              assigned_to_role: targetRole,
               assigned_to_user_id: userId,
             }),
           },
@@ -787,7 +795,7 @@ export function MainCasesPage() {
         setBulk({
           action,
           saving: false,
-          result: `${selectedCount} case(s) pushed to Respondent Recontact Section${role ? ` for ${QC_ROLES.find(r => r.value === role)?.label || role}` : ""}.`,
+          result: `${selectedCount} case(s) pushed to Respondent Recontact Section${targetRole ? ` for ${QC_ROLES.find(r => r.value === targetRole)?.label || targetRole}` : ""}.`,
         });
       }
       setSelectedKeys(new Set());
@@ -1154,22 +1162,27 @@ export function MainCasesPage() {
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>Push to Respondent Recontact Section</DialogTitle>
-                        <DialogDescription>Select the PDM-QC user who should receive this recontact assignment.</DialogDescription>
+                        <DialogDescription>Select the QC role and user who should receive this recontact assignment.</DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-2">
                           <label className="text-sm font-medium">Assign to Role</label>
-                          <select className={SELECT_CLASS} value={selectedRole || "PDM-QC"} disabled>
-                            {QC_ROLES.map((role) => (
+                          <select
+                            className={SELECT_CLASS}
+                            value={selectedRole}
+                            onChange={(e) => setSelectedRole(e.target.value)}
+                            disabled={availableQcRoles.length <= 1}
+                          >
+                            {availableQcRoles.map((role) => (
                               <option key={role.value} value={role.value}>{role.label}</option>
                             ))}
                           </select>
                         </div>
-                        {(selectedRole || "PDM-QC") ? (
+                        {selectedRole ? (
                           <div className="space-y-2">
                             <label className="text-sm font-medium">Select User</label>
                             <select className={SELECT_CLASS} value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} disabled={loadingUsers}>
-                              <option value="">Select a PDM-QC user</option>
+                              <option value="">Select a {selectedRole} user</option>
                               {roleUsers.map((u) => (
                                 <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.username})</option>
                               ))}
@@ -1178,7 +1191,7 @@ export function MainCasesPage() {
                         ) : null}
                         <div className="flex justify-end gap-2">
                           <Button variant="outline" onClick={() => { setPushModalType(null); setSelectedRole(""); setSelectedUserId(""); }}>Cancel</Button>
-                          <Button disabled={!selectedUserId || loadingUsers || Boolean(bulk?.saving)} onClick={() => void executeBulkAction("callback", "PDM-QC", selectedUserId)}>
+                          <Button disabled={!selectedRole || !selectedUserId || loadingUsers || Boolean(bulk?.saving)} onClick={() => void executeBulkAction("callback", selectedRole, selectedUserId)}>
                             Push {selectedKeys.size} Case(s)
                           </Button>
                         </div>
@@ -1225,22 +1238,27 @@ export function MainCasesPage() {
                     <DialogContent>
                       <DialogHeader>
                         <DialogTitle>Push to Silent Listening Section</DialogTitle>
-                        <DialogDescription>Select the PDM-QC user who should receive this silent listening assignment.</DialogDescription>
+                        <DialogDescription>Select the QC role and user who should receive this silent listening assignment.</DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4 py-4">
                         <div className="space-y-2">
                           <label className="text-sm font-medium">Assign to Role</label>
-                          <select className={SELECT_CLASS} value={selectedRole || "PDM-QC"} disabled>
-                            {QC_ROLES.map((role) => (
+                          <select
+                            className={SELECT_CLASS}
+                            value={selectedRole}
+                            onChange={(e) => setSelectedRole(e.target.value)}
+                            disabled={availableQcRoles.length <= 1}
+                          >
+                            {availableQcRoles.map((role) => (
                               <option key={role.value} value={role.value}>{role.label}</option>
                             ))}
                           </select>
                         </div>
-                        {(selectedRole || "PDM-QC") ? (
+                        {selectedRole ? (
                           <div className="space-y-2">
                             <label className="text-sm font-medium">Select User</label>
                             <select className={SELECT_CLASS} value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} disabled={loadingUsers}>
-                              <option value="">Select a PDM-QC user</option>
+                              <option value="">Select a {selectedRole} user</option>
                               {roleUsers.map((u) => (
                                 <option key={u.user_id} value={u.user_id}>{u.full_name} ({u.username})</option>
                               ))}
@@ -1249,7 +1267,7 @@ export function MainCasesPage() {
                         ) : null}
                         <div className="flex justify-end gap-2">
                           <Button variant="outline" onClick={() => { setPushModalType(null); setSelectedRole(""); setSelectedUserId(""); }}>Cancel</Button>
-                          <Button disabled={!selectedUserId || loadingUsers || Boolean(bulk?.saving)} onClick={() => void executeBulkAction("audio", "PDM-QC", selectedUserId)}>
+                          <Button disabled={!selectedRole || !selectedUserId || loadingUsers || Boolean(bulk?.saving)} onClick={() => void executeBulkAction("audio", selectedRole, selectedUserId)}>
                             Push {selectedKeys.size} Case(s)
                           </Button>
                         </div>
