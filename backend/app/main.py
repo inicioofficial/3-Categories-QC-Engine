@@ -49,9 +49,9 @@ WORKSPACE_SCHEMA_BY_SLUG = {
 }
 
 WORKSPACE_XLSFORM_BY_SLUG = {
-    "spread": "data/category_xlsforms/BHT_3_Categories_Margarine_Wave_1_Updated_Script.xlsx",
-    "edible-oil": "data/category_xlsforms/BHT_3_Categories_Edible_Oil_Wave_1_Updated_Script.xlsx",
-    "breakfast-cereal": "data/category_xlsforms/BHT_3_Categories_Breakfast_Cereal_Wave_1_Updated_Script.xlsx",
+    "spread": "data/category_xlsforms/BHT_3_Categories_Margarine_Wave_2_Updated.xlsx",
+    "edible-oil": "data/category_xlsforms/BHT_3_Categories_Edible_Oil_Wave_2_UPDATED.xlsx",
+    "breakfast-cereal": "data/category_xlsforms/BHT_3_Categories_Breakfast_Cereal_Wave_2_Updated.xlsx",
 }
 
 

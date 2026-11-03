@@ -23,7 +23,8 @@ def test_spread_audio_definitions_follow_margarine_xlsform():
     assert "audio_audit_SP_R1a" in spread
     assert "audio_audit_SP_BAR5a" in spread
     assert "audio_audit_SP_BAR7" in spread
-    assert "audio_audit_N_QC1" in spread
+    assert "audio_audit_SP_BAU8" in spread
+    assert "audio_audit_SP_QBI.1" in spread
 
     # The uploaded Margarine script contains a stale EO_BAU7 audit row but no EO_BAU7
     # source question.  It must not leak into the Spread dashboard.

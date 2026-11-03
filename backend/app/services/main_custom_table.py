@@ -26,9 +26,9 @@ BHT_CUSTOM_TABLE_SECTION_PREFIXES = {
     **{slug: (f"{prefix}_",) for slug, prefix in BHT_CATEGORY_BAU5A_PREFIX.items()},
 }
 CATEGORY_XLSFORM_FILES = {
-    "spread": "BHT_3_Categories_Margarine_Wave_1_Updated_Script.xlsx",
-    "edible-oil": "BHT_3_Categories_Edible_Oil_Wave_1_Updated_Script.xlsx",
-    "breakfast-cereal": "BHT_3_Categories_Breakfast_Cereal_Wave_1_Updated_Script.xlsx",
+    "spread": "BHT_3_Categories_Margarine_Wave_2_Updated.xlsx",
+    "edible-oil": "BHT_3_Categories_Edible_Oil_Wave_2_UPDATED.xlsx",
+    "breakfast-cereal": "BHT_3_Categories_Breakfast_Cereal_Wave_2_Updated.xlsx",
 }
 CATEGORY_QUESTION_PREFIXES = {
     "spread": ("SP_",),
