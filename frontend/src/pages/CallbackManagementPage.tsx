@@ -16,6 +16,7 @@ import { createSurveyCtoSession, hasValidSurveyCtoSession } from "@/lib/surveyct
 import { cn } from "@/lib/utils";
 import { matchesSearchTerm } from "@/lib/search";
 import { getSurveyWorkspace } from "@/data/workspaces";
+import { assignmentRoleOptionsForActor } from "@/lib/qcRoles";
 
 const OUTCOME_OPTIONS = [
   { value: "completed", label: "Respondent reachable - completed" },
@@ -77,9 +78,6 @@ type ModalState =
   | { mode: "assign"; caseId: string; submissionKey: string; assignedRole: string; assignedUserId: string }
   | null;
 
-const QC_ROLES = [
-  { value: "PDM-QC", label: "PDM-QC" },
-] as const;
 const ACTIVE_REVIEW_STAGES = new Set(["pending_review", "in_review"]);
 const CALLBACK_STATUS_OPTIONS = [
   { value: "pending_review", label: "Pending Review" },
@@ -106,6 +104,7 @@ function callbackStatusLabel(item: CallbackCase) {
 export function CallbackManagementPage() {
   const { token, user, selectedWorkspace } = useAuth();
   const workspace = getSurveyWorkspace(selectedWorkspace);
+  const qcRoleOptions = assignmentRoleOptionsForActor(user?.role);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [items, setItems] = useState<CallbackCase[]>([]);
@@ -265,8 +264,9 @@ export function CallbackManagementPage() {
 
   function openAssign(item: CallbackCase) {
     const latest = (item.callback_history ?? []).at(-1);
-    setModal({ mode: "assign", caseId: item.case_id, submissionKey: item.submission_key, assignedRole: "PDM-QC", assignedUserId: latest?.assigned_to_user_id ?? "" });
-    setSelectedRole("PDM-QC");
+    const defaultRole = qcRoleOptions[0]?.value ?? "";
+    setModal({ mode: "assign", caseId: item.case_id, submissionKey: item.submission_key, assignedRole: defaultRole, assignedUserId: latest?.assigned_to_user_id ?? "" });
+    setSelectedRole(defaultRole);
     setSelectedUserId(latest?.assigned_to_user_id ?? "");
     setError("");
   }
@@ -582,7 +582,7 @@ export function CallbackManagementPage() {
                       <TableCell className="text-sm text-slate-600">{item.interviewer_id ?? "—"}</TableCell>
                       <TableCell><Badge variant="outline" className={cn("rounded-full text-xs", statusBadgeClass(item.approval_stage))}>{formatToken(item.approval_stage)}</Badge></TableCell>
                       <TableCell>{(item.callback_history ?? []).length === 0 ? <span className="text-xs text-slate-400">No attempts yet</span> : <div className="flex flex-col gap-1">{(item.callback_history ?? []).map((attempt) => <div key={attempt.callback_id} className="flex items-center gap-1.5"><span className="text-xs text-slate-400">#{attempt.attempt_no}</span><Badge variant="outline" className={cn("rounded-full text-xs", OUTCOME_BADGE[attempt.outcome_code] ?? "border-slate-300 bg-white/45 text-slate-700")}>{formatToken(attempt.outcome_code)}</Badge>{attempt.completed_at && <span className="text-xs text-slate-400">{formatDate(attempt.completed_at)}</span>}{attempt.assigned_to_username && <span className="text-xs text-slate-500">({attempt.assigned_to_username})</span>}</div>)}</div>}</TableCell>
-                      <TableCell className="pr-6 text-right"><div className="flex items-center justify-end gap-2">{assignState === "no_attempt" && <span className="rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500">Not pushed</span>}{assignState === "unassigned_pending" && <span className="rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500">Unassigned pending</span>}{assignState === "others" && latestAttempt && <span className="flex items-center gap-1 rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500"><Lock className="h-3 w-3" />{latestAttempt.assigned_to_username ? `In review by ${latestAttempt.assigned_to_username}` : "In review"}</span>}{canManageAssignments && latestAttempt?.outcome_code === "pending" && isEligible && <button type="button" onClick={() => openAssign(item)} className="flex items-center gap-1 rounded-lg border border-sky-300/40 bg-sky-50/40 px-3 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50/70"><UserCheck className="h-3 w-3" />{latestAttempt.assigned_to_user_id ? "Reassign" : "Assign"}</button>}</div></TableCell>
+                      <TableCell className="pr-6 text-right"><div className="flex items-center justify-end gap-2">{assignState === "no_attempt" && <span className="rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500">Not pushed</span>}{assignState === "unassigned_pending" && <span className="rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500">Unassigned pending</span>}{assignState === "others" && latestAttempt && <span className="flex items-center gap-1 rounded-lg border border-slate-200/60 bg-slate-50/40 px-3 py-1 text-xs text-slate-500"><Lock className="h-3 w-3" />{latestAttempt.assigned_to_username ? `In review by ${latestAttempt.assigned_to_username}` : "In review"}</span>}{canManageAssignments && qcRoleOptions.length > 0 && latestAttempt?.outcome_code === "pending" && isEligible && <button type="button" onClick={() => openAssign(item)} className="flex items-center gap-1 rounded-lg border border-sky-300/40 bg-sky-50/40 px-3 py-1 text-xs font-medium text-sky-700 hover:bg-sky-50/70"><UserCheck className="h-3 w-3" />{latestAttempt.assigned_to_user_id ? "Reassign" : "Assign"}</button>}</div></TableCell>
                     </TableRow>
                   );
                 })}
@@ -606,8 +606,8 @@ export function CallbackManagementPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="space-y-1.5"><label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assign to role</label><select value={selectedRole || "PDM-QC"} disabled className="w-full rounded-[1rem] border border-white/70 bg-white/70 px-4 py-2.5 text-sm text-slate-800">{QC_ROLES.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></div>
-                <div className="space-y-1.5"><label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assign to user</label><select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} disabled={!selectedRole || loadingUsers} className="w-full rounded-[1rem] border border-white/70 bg-white/70 px-4 py-2.5 text-sm text-slate-800 disabled:opacity-60"><option value="">Select a PDM-QC user</option>{roleUsers.map((entry) => <option key={entry.user_id} value={entry.user_id}>{entry.full_name} ({entry.username})</option>)}</select></div>
+                <div className="space-y-1.5"><label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assign to role</label><select value={selectedRole} onChange={(e) => { setSelectedRole(e.target.value); setSelectedUserId(""); }} disabled={qcRoleOptions.length <= 1} className="w-full rounded-[1rem] border border-white/70 bg-white/70 px-4 py-2.5 text-sm text-slate-800">{qcRoleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}</select></div>
+                <div className="space-y-1.5"><label className="text-xs font-semibold uppercase tracking-wide text-slate-500">Assign to user</label><select value={selectedUserId} onChange={(e) => setSelectedUserId(e.target.value)} disabled={!selectedRole || loadingUsers} className="w-full rounded-[1rem] border border-white/70 bg-white/70 px-4 py-2.5 text-sm text-slate-800 disabled:opacity-60"><option value="">Select a {selectedRole || "QC"} user</option>{roleUsers.map((entry) => <option key={entry.user_id} value={entry.user_id}>{entry.full_name} ({entry.username})</option>)}</select></div>
                 <p className="text-sm text-slate-600">Retrieve this recontact case or reassign it to another reviewer.</p>
               </div>
             )}
