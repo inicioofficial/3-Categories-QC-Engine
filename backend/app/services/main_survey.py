@@ -3727,6 +3727,17 @@ def build_bht_overview_kpi_export_dataframe(
     region_values = _bht_region_filter_values(regions_sel)
     sector_values = _choice_filter_values(SECTOR_LABELS, sectors_sel)
 
+    # Resolve Region/Sector live from the case record with the form-aware label
+    # SQL used by the Data Explorer. The overview mart only picks up label
+    # changes when the category sync finishes a full cycle and rebuilds it.
+    from backend.app.services.main_survey_cases import _city_label_sql, _sector_label_sql
+
+    root_dir = str(settings.root_dir)
+    live_region_sql = _city_label_sql("export_mc.record", root_dir).replace("%", "%%")
+    live_sector_sql = _sector_label_sql("export_mc.record", root_dir).replace("%", "%%")
+    live_region_code_sql = "COALESCE(NULLIF(TRIM(export_mc.record->>'City_1'), ''), NULLIF(TRIM(export_mc.record->>'Region'), ''))"
+    live_sector_code_sql = "COALESCE(NULLIF(TRIM(export_mc.record->>'Sector'), ''), NULLIF(TRIM(export_mc.record->>'sector'), ''))"
+
     where_parts = ["TRUE"]
     params: list[Any] = []
     active_scope_sql, active_scope_params = main_row_scope_clause(settings, "bht", prefix="AND")
@@ -3743,10 +3754,10 @@ def build_bht_overview_kpi_export_dataframe(
         where_parts.append("bht.category_slugs @> ARRAY[%s]::text[]")
         params.append(category_key)
     if region_values:
-        where_parts.append("(bht.region_label = ANY(%s) OR bht.region_code = ANY(%s))")
+        where_parts.append(f"(({live_region_sql}) = ANY(%s) OR {live_region_code_sql} = ANY(%s))")
         params.extend([regions_sel, region_values])
     if sector_values:
-        where_parts.append("(bht.sector_label = ANY(%s) OR bht.sector_code = ANY(%s))")
+        where_parts.append(f"(({live_sector_sql}) = ANY(%s) OR {live_sector_code_sql} = ANY(%s))")
         params.append(sectors_sel)
         params.append(sector_values)
 
@@ -3791,8 +3802,8 @@ def build_bht_overview_kpi_export_dataframe(
                         bht.survey_month,
                         mq.start_time,
                         mq.submitted_at,
-                        bht.region_label,
-                        bht.sector_label,
+                        COALESCE(NULLIF(TRIM({live_region_sql}), ''), NULLIF(TRIM(bht.region_label), ''), 'Unknown') AS region_label,
+                        COALESCE(NULLIF(TRIM({live_sector_sql}), ''), NULLIF(TRIM(bht.sector_label), ''), '(No response)') AS sector_label,
                         mq.interviewer_id,
                         mq.username,
                         mq.selected_panel_labels,
@@ -3800,6 +3811,7 @@ def build_bht_overview_kpi_export_dataframe(
                         mq.approved_by
                     FROM mart.bht_case_overview_dim bht
                     INNER JOIN mart.main_case_queue mq ON mq.case_id = bht.case_id
+                    LEFT JOIN clean.main_case export_mc ON export_mc.case_id = bht.case_id
                     WHERE {where_sql}
                 ),
                 latest_status_actors AS (

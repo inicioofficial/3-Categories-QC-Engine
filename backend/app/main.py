@@ -140,6 +140,14 @@ async def _run_bootstraps_if_needed() -> None:
             await asyncio.to_thread(bootstrap_qc_assignment_scope, settings)
         except Exception:
             logger.exception("QC assignment scope bootstrap failed on initialized database.")
+        # Apply enumerator matrix rule changes to existing flags now instead of
+        # waiting for the category sync's next full QC pass.
+        try:
+            from backend.app.services.main_survey_cases import refresh_main_enumerator_matrix_anomalies
+
+            await asyncio.to_thread(refresh_main_enumerator_matrix_anomalies, settings)
+        except Exception:
+            logger.exception("Enumerator matrix anomaly refresh failed on initialized database.")
         logger.info("Database already initialized; runtime mart refresh is owned by the category sync.")
         return
 

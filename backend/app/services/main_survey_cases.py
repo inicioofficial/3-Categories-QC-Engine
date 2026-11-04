@@ -4040,6 +4040,89 @@ def run_main_qc(
     return {"createdIssueCount": created, "autoApprovedCount": 0}
 
 
+def refresh_main_enumerator_matrix_anomalies(settings: Settings) -> dict[str, Any]:
+    """Recompute only the enumerator matrix anomaly flags for all live cases.
+
+    Rule changes otherwise reach existing flags only when the category sync runs
+    a full QC pass, so this replaces stale flags (e.g. the retired panel check)
+    without re-running every other QC rule.
+    """
+    if not settings.database_url:
+        return {"status": "skipped"}
+    bootstrap_main_rule_definitions(settings)
+    with db_connection(settings) as conn:
+        with conn.cursor() as cur:
+            cur.execute("SET LOCAL statement_timeout = '5min'")
+            cur.execute(
+                """
+                SELECT submission_key, case_id, interviewer_id, record
+                FROM clean.main_case
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM clean.deleted_main_cases dmc
+                    WHERE dmc.submission_key = clean.main_case.submission_key
+                )
+                """
+            )
+            cases = cur.fetchall()
+            cached: dict[str, tuple[dict[str, Any], list[dict[str, Any]], str, datetime | None, datetime | None]] = {}
+            for case in cases:
+                sub_key = str(case.get("submission_key") or "").strip()
+                if not sub_key:
+                    continue
+                record = case.get("record") or {}
+                interviewer_id = normalize_main_interviewer_id(case.get("interviewer_id") or record.get("interviewer_id") or record.get("username"))
+                cached[sub_key] = (record, [], interviewer_id, None, None)
+            findings = _build_enumerator_matrix_anomalies(cases, cached, {}, settings)
+
+            cur.execute(
+                """
+                DELETE FROM qc.issue_queue
+                WHERE instrument_code = 'main'
+                  AND rule_result_id IN (
+                      SELECT rule_result_id
+                      FROM qc.rule_result
+                      WHERE instrument_code = 'main'
+                        AND rule_code = 'MAIN_ENUMERATOR_MATRIX_ANOMALY'
+                  )
+                """
+            )
+            removed = cur.rowcount
+            cur.execute(
+                "DELETE FROM qc.rule_result WHERE instrument_code = 'main' AND rule_code = 'MAIN_ENUMERATOR_MATRIX_ANOMALY'"
+            )
+            created = 0
+            for sub_key, message in findings.items():
+                created += _create_issue(cur, sub_key, "MAIN_ENUMERATOR_MATRIX_ANOMALY", "high", message, None, "record", "clean.main_case")
+            # Keep the Data Explorer's stored flag counts in step with the new flags.
+            cur.execute(
+                """
+                WITH issue_counts AS (
+                    SELECT
+                        COALESCE(NULLIF(TRIM(submission_key), ''), NULLIF(TRIM(case_id), '')) AS join_key,
+                        COUNT(*) FILTER (WHERE COALESCE(NULLIF(TRIM(issue_status), ''), 'pending_review') <> 'resolved')::int AS open_issue_count
+                    FROM qc.issue_queue
+                    WHERE instrument_code = 'main'
+                    GROUP BY 1
+                )
+                UPDATE mart.main_case_queue mq
+                SET open_issue_count = COALESCE(ic.open_issue_count, 0),
+                    qc_flag_count = COALESCE(ic.open_issue_count, 0)
+                FROM mart.main_case_queue target
+                LEFT JOIN issue_counts ic ON ic.join_key = target.submission_key
+                WHERE mq.case_id = target.case_id
+                  AND (
+                      COALESCE(mq.open_issue_count, 0) <> COALESCE(ic.open_issue_count, 0)
+                      OR COALESCE(mq.qc_flag_count, 0) <> COALESCE(ic.open_issue_count, 0)
+                  )
+                """
+            )
+        conn.commit()
+    _clear_main_case_list_cache()
+    logger.info("Enumerator matrix anomalies refreshed: removed %s, created %s.", removed, created)
+    return {"status": "success", "removed": removed, "created": created}
+
+
 def list_main_qc_pending_submission_keys(settings: Settings) -> list[str]:
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
