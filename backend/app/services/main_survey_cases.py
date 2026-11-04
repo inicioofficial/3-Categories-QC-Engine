@@ -236,11 +236,14 @@ MAIN_INTERVIEW_MAX_MINUTES = 180
 MAIN_MIN_GAP_BETWEEN_INTERVIEWS_MINUTES = 5
 MAIN_EXPORT_TEMPLATE_FILE = "Main_Survey_Data Dictionary_latest.sav"
 MAIN_ENUMERATOR_MATRIX_MIN_CASES = 10
-MAIN_ENUMERATOR_MATRIX_THRESHOLDS = {
-    "Gender": 0.90,
-    "Age_cal": 0.80,
-    "Sector": 0.85,
-    "selected_panel": 0.90,
+# Respondent-profile variables tracked per interviewer. Each entry lists the
+# Wave 2 category form field first, then the legacy omnibus field. Selected
+# panel and sector are not tracked: each Wave 2 form covers one category, so
+# every case selects the same panel by design.
+MAIN_ENUMERATOR_MATRIX_VARIABLES: dict[str, tuple[str, tuple[str, ...], float]] = {
+    "gender": ("Gender", ("S3bi", "Gender"), 0.90),
+    "age": ("Age band", ("Age", "Age_cal"), 0.80),
+    "sec": ("SEC", ("SEC",), 0.85),
 }
 
 MAIN_PHONE_FIELDS = (
@@ -325,7 +328,7 @@ RULE_DEFINITIONS: list[tuple[str, str, str, str | None, str, str, str, str]] = [
     ("MAIN_DUPLICATE_GPS", INSTRUMENT, "clean.main_case", "record", "high", "python", "Identical GPS coordinates appear in another main interview by the same interviewer.", "flag_for_review"),
     ("MAIN_GAP_BETWEEN_2_INTERVIEWS", INSTRUMENT, "clean.main_case", "record", "high", "python", "Gap between consecutive interviews by the same interviewer is below 5 minutes.", "flag_for_review"),
     ("MAIN_TIME_INTERWOVEN", INSTRUMENT, "clean.main_case", "record", "high", "python", "Two interviews by the same interviewer overlap by more than 1 minute.", "flag_for_review"),
-    ("MAIN_ENUMERATOR_MATRIX_ANOMALY", INSTRUMENT, "clean.main_case", "record", "high", "python", "Interviewer-level matrix/profile distribution is unusually concentrated.", "flag_for_review"),
+    ("MAIN_ENUMERATOR_MATRIX_ANOMALY", INSTRUMENT, "clean.main_case", "record", "high", "python", "Interviewer-level respondent profile (gender, age band or SEC) is unusually concentrated.", "flag_for_review"),
     ("MAIN_LC5C", INSTRUMENT, "clean.main_case_section", "LC5c", "medium", "python", "LC5c exceeds 5000, is below 100, or does not end with 0.", "flag_for_review"),
     ("MAIN_C3A_FEMALE", INSTRUMENT, "clean.main_case_section", "C3a_female", "medium", "python", "C3a_female is greater than 5.", "flag_for_review"),
     ("MAIN_C3A_MALE", INSTRUMENT, "clean.main_case_section", "C3a_male", "medium", "python", "C3a_male is greater than 5.", "flag_for_review"),
@@ -1741,6 +1744,26 @@ def _sync_main_case_queue_rows(cur: Any, case_ids: list[str]) -> None:
         )
     except Exception:
         logger.exception("Unable to incrementally sync mart.main_case_queue rows.")
+        return
+    # The Overview KPIs and export read approval status from these marts, which
+    # the background sync otherwise only refreshes on its next rebuild.
+    for mart_table in ("mart.bht_case_overview_dim", "mart.bht_map_point"):
+        try:
+            cur.execute("SAVEPOINT sync_overview_status")
+            cur.execute(
+                f"""
+                UPDATE {mart_table} target
+                SET approval_status = COALESCE(NULLIF(TRIM(mc.approval_stage), ''), NULLIF(TRIM(mc.current_status), ''), 'pending_review')
+                FROM clean.main_case mc
+                WHERE target.case_id = mc.case_id
+                  AND target.case_id = ANY(%s)
+                """,
+                (normalized_ids,),
+            )
+            cur.execute("RELEASE SAVEPOINT sync_overview_status")
+        except Exception:
+            cur.execute("ROLLBACK TO SAVEPOINT sync_overview_status")
+            logger.exception("Unable to sync %s approval status.", mart_table)
 
 # ---------------------------------------------------------------------------
 # Case list
@@ -3731,9 +3754,14 @@ def _build_enumerator_matrix_anomalies(
             }
         )
 
-    gender_labels = _choice_label_map_from_xlsform(str(settings.root_dir), "Gender")
-    age_labels = _choice_label_map_from_xlsform(str(settings.root_dir), "Age_cal")
-    sector_labels = {**MAIN_SECTOR_LABELS, **{f"{code}.0": label for code, label in MAIN_SECTOR_LABELS.items()}}
+    root_dir = str(settings.root_dir)
+    # Wave 2 gender is S3bi (1 = Male, 2 = Female); Age and SEC are calculated
+    # text labels. The omnibus maps cover legacy coded values.
+    value_labels: dict[str, dict[str, str]] = {
+        "gender": {**_choice_label_map_from_xlsform(root_dir, "Gender"), "1": "Male", "2": "Female"},
+        "age": _choice_label_map_from_xlsform(root_dir, "Age_cal"),
+        "sec": _choice_label_map_from_xlsform(root_dir, "SEC"),
+    }
 
     findings_by_submission: dict[str, str] = {}
     for interviewer, interviewer_cases in by_interviewer.items():
@@ -3741,48 +3769,25 @@ def _build_enumerator_matrix_anomalies(
         if total_cases < MAIN_ENUMERATOR_MATRIX_MIN_CASES:
             continue
 
-        buckets: dict[str, Counter[str]] = {
-            "Gender": Counter(),
-            "Age_cal": Counter(),
-            "Sector": Counter(),
-            "selected_panel": Counter(),
-        }
+        buckets: dict[str, Counter[str]] = {key: Counter() for key in MAIN_ENUMERATOR_MATRIX_VARIABLES}
         for item in interviewer_cases:
             record = item["record"]
-            gender = _main_clean_matrix_value(record.get("Gender"))
-            age = _main_clean_matrix_value(record.get("Age_cal"))
-            sector = _main_clean_matrix_value(record.get("Sector"))
-            if gender:
-                buckets["Gender"][gender] += 1
-            if age:
-                buckets["Age_cal"][age] += 1
-            if sector:
-                buckets["Sector"][sector] += 1
-            for panel_code in _main_case_selected_panel_codes(item["case_id"], panels_by_case_id):
-                buckets["selected_panel"][panel_code] += 1
+            for key, (_label, fields, _threshold) in MAIN_ENUMERATOR_MATRIX_VARIABLES.items():
+                value = next((v for v in (_main_clean_matrix_value(record.get(field)) for field in fields) if v), "")
+                if value:
+                    buckets[key][value] += 1
 
         messages: list[str] = []
-        for variable, counter in buckets.items():
+        for key, counter in buckets.items():
             if not counter:
                 continue
+            variable_label, _fields, threshold = MAIN_ENUMERATOR_MATRIX_VARIABLES[key]
             top_value, top_count = counter.most_common(1)[0]
-            denominator = total_cases
-            share = top_count / denominator if denominator else 0
-            threshold = MAIN_ENUMERATOR_MATRIX_THRESHOLDS[variable]
+            share = top_count / total_cases if total_cases else 0
             if share < threshold:
                 continue
-            if variable == "Gender":
-                label = gender_labels.get(top_value) or gender_labels.get(f"{top_value}.0") or top_value
-                variable_label = "Gender"
-            elif variable == "Age_cal":
-                label = age_labels.get(top_value) or age_labels.get(f"{top_value}.0") or top_value
-                variable_label = "Age band"
-            elif variable == "Sector":
-                label = sector_labels.get(top_value) or sector_labels.get(f"{top_value}.0") or top_value
-                variable_label = "Sector"
-            else:
-                label = BHT_PANEL_LABEL_BY_CODE.get(top_value, top_value)
-                variable_label = "Selected panel"
+            labels = value_labels.get(key, {})
+            label = labels.get(top_value) or labels.get(f"{top_value}.0") or top_value
             messages.append(
                 f"{variable_label} '{label}' appears in {top_count}/{total_cases} cases ({share * 100:.1f}%) for interviewer {interviewer}."
             )

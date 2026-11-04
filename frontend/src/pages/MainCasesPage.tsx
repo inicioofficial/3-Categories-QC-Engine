@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollableTable, ScrollableTableHeader } from "@/components/ui/ScrollableTable";
 import { apiFetch, type MainCaseListItem, type MainCaseListResponse } from "@/lib/api";
-import { BHT_CATEGORY_FILTER_OPTIONS, getBhtCategory } from "@/data/bhtCategories";
+import { getBhtCategory } from "@/data/bhtCategories";
 import { exportRowsToExcel } from "@/lib/exportExcel";
 import { cn } from "@/lib/utils";
 
@@ -208,8 +208,9 @@ const MainCaseRow = memo(function MainCaseRow({
 export function MainCasesPage() {
   const { token, user, selectedCategory } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialCategoryFilters = (searchParams.get("category") ?? "").split(",").filter(Boolean);
-  const defaultCategoryFilters = initialCategoryFilters.length ? initialCategoryFilters : selectedCategory && selectedCategory !== "all" ? [selectedCategory] : [];
+  // The selected category workspace (X-Workspace) already scopes this explorer.
+  // The legacy 4 Seasons panel filter does not apply to Wave 2 category data.
+  const defaultCategoryFilters: string[] = [];
   const [statusFilters, setStatusFilters] = useState<string[]>(() => (searchParams.get("status") ?? "").split(",").filter(Boolean));
   const [categoryFilters, setCategoryFilters] = useState<string[]>(() => defaultCategoryFilters);
   const [cityFilters, setCityFilters] = useState<string[]>(() => (searchParams.get("cities") ?? "").split(",").filter(Boolean));
@@ -888,19 +889,6 @@ export function MainCasesPage() {
               </div>
 
               <div className="grid min-w-0 gap-4 md:grid-cols-2 xl:grid-cols-5">
-              <div className="space-y-1.5">
-                <label className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Category</label>
-                <MultiSelectDropdown
-                  label="categories"
-                  options={BHT_CATEGORY_FILTER_OPTIONS.filter((category) => category.slug !== "all").map((category) => ({ value: category.slug, label: category.label }))}
-                  selected={categoryFilters}
-                  onChange={(value) => {
-                    setCategoryFilters(value);
-                    setPage(1);
-                    setSelectedKeys(new Set());
-                  }}
-                />
-              </div>
               <div className="space-y-1.5">
                 <label className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Status</label>
                 <MultiSelectDropdown

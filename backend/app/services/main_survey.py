@@ -28,7 +28,7 @@ from backend.app.etl_bridge import describe_sync_failure, run_main_survey_sync_j
 from backend.app.services.main_data_scope import main_case_scope_clause, main_case_scope_condition, main_row_scope_clause
 from backend.app.settings import Settings
 from backend.app.sync_lock import survey_sync_lock_wait
-from backend.app.workspace_context import ACTIVE_WORKSPACE
+from backend.app.workspace_context import ACTIVE_WORKSPACE, WORKSPACE_FORM_IDS
 from survey_platform.config import load_main_survey_pipeline_config
 from survey_platform.db import clear_manual_sync_override, request_manual_sync_override
 from survey_platform.workspaces import load_survey_workspaces
@@ -83,6 +83,23 @@ def get_workspace_bht_overview(settings: Settings, workspace_slug: str) -> dict[
                 FROM {}
             """).format(table))
             summary = cur.fetchone() or {}
+            # QC decisions are recorded by this platform on clean.main_case, not
+            # in the SurveyCTO payload, so count them from there.
+            cur.execute(
+                """
+                SELECT
+                    count(*) FILTER (WHERE lower(coalesce(nullif(trim(mc.approval_stage), ''), 'pending')) IN ('approved', 'reviewed_approved'))::int AS approved,
+                    count(*) FILTER (WHERE lower(coalesce(nullif(trim(mc.approval_stage), ''), 'pending')) IN ('rejected', 'reviewed_rejected', 'cancelled', 'canceled'))::int AS rejected
+                FROM clean.main_case mc
+                WHERE mc.form_id = %s
+                  AND NOT EXISTS (
+                      SELECT 1 FROM clean.deleted_main_cases dmc
+                      WHERE dmc.submission_key = mc.submission_key
+                  )
+                """,
+                (WORKSPACE_FORM_IDS.get(str(workspace_slug or "").strip().lower()),),
+            )
+            decision_row = cur.fetchone() or {}
             cur.execute(psql.SQL("""
                 SELECT dimension, value, count(*)::int AS count
                 FROM {}, LATERAL (VALUES
@@ -120,8 +137,8 @@ def get_workspace_bht_overview(settings: Settings, workspace_slug: str) -> dict[
     total = int(summary.get("total") or 0)
     # A SurveyCTO import only means that the case was received. Category cases
     # remain pending until this platform records an explicit QC decision.
-    approved = 0
-    rejected = 0
+    approved = int(decision_row.get("approved") or 0)
+    rejected = int(decision_row.get("rejected") or 0)
     media_count = int(summary.get("media_count") or 0)
     return {
         "category": {"slug": workspace_slug, "label": label, "panelCode": None},
@@ -4400,8 +4417,17 @@ def refresh_bht_map_mart(settings: Settings) -> None:
         (slug, meta["panelCode"])
         for slug, meta in BHT_CATEGORY_PANEL_MAP.items()
     ]
-    region_labels_json = json.dumps(BHT_OVERVIEW_DISTRIBUTIONS["region"]["labels"])
-    sector_labels_json = json.dumps(SECTOR_LABELS)
+    # Wave 1 stored region/sector in City_1/Sector; the Wave 2 category forms
+    # use Region/sector and reuse codes with different labels per form. Reuse
+    # the Data Explorer's form-aware label SQL so the Overview matches it.
+    from backend.app.services.main_survey_cases import _city_label_sql, _sector_label_sql
+
+    root_dir = str(settings.root_dir)
+    # The generated SQL embeds labels as literals; escape % for psycopg params.
+    region_label_sql = _city_label_sql("m.record", root_dir).replace("%", "%%")
+    sector_label_sql = _sector_label_sql("m.record", root_dir).replace("%", "%%")
+    region_code_sql = "COALESCE(NULLIF(TRIM(m.record->>'City_1'), ''), NULLIF(TRIM(m.record->>'Region'), ''))"
+    sector_code_sql = "COALESCE(NULLIF(TRIM(m.record->>'Sector'), ''), NULLIF(TRIM(m.record->>'sector'), ''))"
     week_labels_json = json.dumps(BHT_OVERVIEW_DISTRIBUTIONS["week"]["labels"])
     gender_labels_json = json.dumps(BHT_OVERVIEW_DISTRIBUTIONS["gender"]["labels"])
     sec_labels_json = json.dumps(_choice_labels_for_variable(settings, "SEC"))
@@ -4461,18 +4487,10 @@ def refresh_bht_map_mart(settings: Settings) -> None:
                         FROM UNNEST(ARRAY['omnibus']::text[] || COALESCE(pc.panel_slugs, ARRAY[]::text[])) AS slug
                         ORDER BY slug
                     ) AS category_slugs,
-                    NULLIF(TRIM(m.record->>'City_1'), '') AS region_code,
-                    COALESCE(
-                        %s::jsonb ->> regexp_replace(COALESCE(NULLIF(TRIM(m.record->>'City_1'), ''), ''), '\\.0$', ''),
-                        NULLIF(TRIM(m.record->>'City_1'), ''),
-                        'Unknown'
-                    ) AS region_label,
-                    NULLIF(TRIM(m.record->>'Sector'), '') AS sector_code,
-                    COALESCE(
-                        %s::jsonb ->> regexp_replace(COALESCE(NULLIF(TRIM(m.record->>'Sector'), ''), ''), '\\.0$', ''),
-                        NULLIF(TRIM(m.record->>'Sector'), ''),
-                        '(No response)'
-                    ) AS sector_label,
+                    {region_code_sql} AS region_code,
+                    COALESCE(NULLIF(TRIM({region_label_sql}), ''), 'Unknown') AS region_label,
+                    {sector_code_sql} AS sector_code,
+                    COALESCE(NULLIF(TRIM({sector_label_sql}), ''), '(No response)') AS sector_label,
                     NULLIF(TRIM(m.record->>'SEC'), '') AS sec_value,
                     COALESCE(
                         %s::jsonb ->> regexp_replace(COALESCE(NULLIF(TRIM(m.record->>'SEC'), ''), ''), '\\.0$', ''),
@@ -4507,7 +4525,7 @@ def refresh_bht_map_mart(settings: Settings) -> None:
                 )
                 {m_scope_clause}
                 """,
-                (region_labels_json, sector_labels_json, sec_labels_json, week_labels_json, gender_labels_json, age_labels_json, *m_scope_params),
+                (sec_labels_json, week_labels_json, gender_labels_json, age_labels_json, *m_scope_params),
             )
             cur.execute(
                 f"""

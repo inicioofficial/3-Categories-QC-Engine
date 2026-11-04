@@ -26,10 +26,11 @@ const ADMIN_NAV_GROUP = {
   items: [{ title: "User Management", url: "/admin/users" }],
 };
 
-const MAIN_NAV_GROUPS_BASE = [
+// The Quota link pointed to the 4 Seasons quota tracker, which does not cover
+// the 3 Categories study, so it is hidden from this platform's navigation.
+const MAIN_NAV_GROUPS_BASE: NavItem[] = [
   { title: "Overview - Demographics", url: "/main/overview-demographics" },
   { title: "Geospatial View", url: "/main/geospatial-view" },
-  { title: "Quota", externalUrl: "https://quota-tracker.inicio-insights.com/" },
 ];
 
 export function PlatformPage({
