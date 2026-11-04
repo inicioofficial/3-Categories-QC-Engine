@@ -1780,6 +1780,11 @@ def list_main_cases(
         for item in str(category or "").split(",")
         if item.strip() and item.strip() != "all" and item.strip() in BHT_CATEGORY_PANEL_MAP and item.strip() != "omnibus"
     ]
+    if active_workspace_form_id():
+        # A category workspace is already scoped by form_id. The legacy category
+        # filter maps to omnibus panel codes that Wave 2 category rows do not
+        # carry, so applying it would filter every workspace record out.
+        category_keys = []
     category_key = ",".join(category_keys) if category_keys else "all"
     city_filters = [item.strip() for item in str(cities or "").split(",") if item.strip()]
     interviewer_filters = [normalize_main_interviewer_id(item) for item in str(interviewers or "").split(",") if item.strip()]
@@ -6580,8 +6585,11 @@ def bulk_update_main_case_status(
     if not normalized_keys:
         raise HTTPException(status_code=400, detail="No valid submission keys provided.")
 
+    is_final_status = new_status in MAIN_FINAL_STATUSES
     with db_connection(settings) as conn:
         with conn.cursor() as cur:
+            cur.execute("SET LOCAL lock_timeout = '5s'")
+            cur.execute("SET LOCAL statement_timeout = '60s'")
             cur.execute(
                 """
                 WITH selected_cases AS MATERIALIZED (
@@ -6646,8 +6654,34 @@ def bulk_update_main_case_status(
             updated_rows = cur.fetchall()
             updated_keys = [str(row["submission_key"]) for row in updated_rows]
             case_ids = [str(row["case_id"]) for row in updated_rows]
-            _sync_main_case_queue_rows(cur, case_ids)
+            if is_final_status and case_ids:
+                # A final decision closes any pending Silent Listening review,
+                # matching the single-case decision path.
+                cur.execute(
+                    """
+                    UPDATE clean.audio_listening
+                    SET status = 'reviewed',
+                        reviewed_at = COALESCE(reviewed_at, now())
+                    WHERE case_id = ANY(%s)
+                      AND COALESCE(NULLIF(TRIM(status), ''), 'pending') = 'pending'
+                    """,
+                    (case_ids,),
+                )
         conn.commit()
+
+    # The decisions above are authoritative and already committed. The mart sync
+    # runs on its own connection: a failure inside the decision transaction would
+    # leave it aborted and silently roll back every approval/rejection on commit.
+    if case_ids:
+        try:
+            with db_connection(settings) as sync_conn:
+                with sync_conn.cursor() as sync_cur:
+                    sync_cur.execute("SET LOCAL lock_timeout = '2s'")
+                    sync_cur.execute("SET LOCAL statement_timeout = '30s'")
+                    _sync_main_case_queue_rows(sync_cur, case_ids)
+                sync_conn.commit()
+        except Exception:
+            logger.exception("Unable to sync Main case queue after bulk status update.")
 
     updated_key_set = set(updated_keys)
     not_found = [key for key in normalized_keys if key not in updated_key_set]

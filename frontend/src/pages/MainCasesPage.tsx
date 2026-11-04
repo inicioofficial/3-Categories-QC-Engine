@@ -709,7 +709,7 @@ export function MainCasesPage() {
       const assignedUser = userId ? roleUsers.find((entry) => entry.user_id === userId) : undefined;
       const assignedName = assignedUser ? `${assignedUser.full_name || assignedUser.username}`.trim() : null;
       if (action === "approve" || action === "unapprove") {
-        await apiFetch(
+        const statusResult = await apiFetch<{ updated?: number; notFound?: string[] }>(
           "/api/main-survey/cases/bulk-status",
           {
             method: "POST",
@@ -722,8 +722,12 @@ export function MainCasesPage() {
           120_000,
         );
         const nextStatus = action === "approve" ? "approved" : "pending_review";
-        setCaseItems((current) => current.map((item) => keys.includes(item.submission_key) ? { ...item, approval_stage: nextStatus, approved_by: action === "approve" ? "qc_101" : null } : item));
-        setBulk({ action, saving: false, result: action === "approve" ? `${selectedCount} case(s) reviewed and approved.` : `${selectedCount} case(s) returned to pending review.` });
+        const notFound = new Set(statusResult?.notFound ?? []);
+        const updatedKeys = keys.filter((key) => !notFound.has(key));
+        const updatedCount = Number(statusResult?.updated ?? updatedKeys.length);
+        setCaseItems((current) => current.map((item) => updatedKeys.includes(item.submission_key) ? { ...item, approval_stage: nextStatus, approved_by: action === "approve" ? "qc_101" : null } : item));
+        const skipped = notFound.size ? ` ${notFound.size} case(s) could not be updated.` : "";
+        setBulk({ action, saving: false, result: (action === "approve" ? `${updatedCount} case(s) reviewed and approved.` : `${updatedCount} case(s) returned to pending review.`) + skipped });
       } else if (action === "unassign_callback") {
         await apiFetch(
           "/api/main-survey/callbacks/bulk-unassign",
