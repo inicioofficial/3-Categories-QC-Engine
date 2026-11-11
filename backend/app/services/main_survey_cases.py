@@ -4757,15 +4757,36 @@ def _choice_label_case_sql(raw_expr: str, form_expr: str, category_maps: dict[st
     def q(value: Any) -> str:
         return "'" + str(value).replace("'", "''") + "'"
 
-    parts = []
-    for form_id, labels in category_maps.items():
-        for code, label in labels.items():
-            parts.append(f"WHEN {form_expr} = {q(form_id)} AND {raw_expr} IN ({q(code)}, {q(code + '.0')}) THEN {q(label)}")
-    for code, label in fallback_map.items():
-        parts.append(f"WHEN {raw_expr} IN ({q(code)}, {q(str(code) + '.0')}) THEN {q(label)}")
-    if not parts:
-        return raw_expr
-    return f"CASE {' '.join(parts)} ELSE {raw_expr} END"
+    def when_clauses(pairs: list[tuple[str, str]]) -> str:
+        seen: set[str] = set()
+        clauses = []
+        for key, label in pairs:
+            if key not in seen:  # first match wins, as in a searched CASE
+                seen.add(key)
+                clauses.append(f"WHEN {q(key)} THEN {q(label)}")
+        return " ".join(clauses)
+
+    # Use the simple "CASE <value> WHEN ..." form so raw_expr, which reads the
+    # large JSONB record, is evaluated once per row instead of once per branch.
+    # The searched form re-read the record ~200 times per row and made exports
+    # hit their statement timeout on full-size category records.
+    form_pairs = [
+        (f"{form_id}|{variant}", label)
+        for form_id, labels in category_maps.items()
+        for code, label in labels.items()
+        for variant in (str(code), f"{code}.0")
+    ]
+    fallback_pairs = [
+        (variant, label)
+        for code, label in fallback_map.items()
+        for variant in (str(code), f"{code}.0")
+    ]
+    expr = raw_expr
+    if fallback_pairs:
+        expr = f"CASE {raw_expr} {when_clauses(fallback_pairs)} ELSE {raw_expr} END"
+    if form_pairs:
+        expr = f"CASE COALESCE({form_expr}, '') || '|' || {raw_expr} {when_clauses(form_pairs)} ELSE {expr} END"
+    return expr
 
 
 def _city_label_sql(record_alias: str, root_dir: str) -> str:

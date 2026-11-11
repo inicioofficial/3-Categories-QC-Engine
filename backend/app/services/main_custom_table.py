@@ -539,6 +539,10 @@ def _filter_sql(filters: dict[str, list[str]]) -> tuple[str, list[Any]]:
         parts.append("TRIM(COALESCE(m.record->>'final_outcome_code', '')) = ANY(%s)")
         params.append(final_outcomes)
     category_slugs = [str(item).strip() for item in categories if str(item).strip() and str(item).strip() != "omnibus"]
+    if ACTIVE_WORKSPACE.get():
+        # A category workspace is already scoped by form_id. Its cases carry the
+        # workspace slug as panel code, so legacy Panel_N filters match no rows.
+        category_slugs = []
     panel_codes = [
         str(BHT_CATEGORY_PANEL_MAP[slug]["panelCode"])
         for slug in category_slugs
