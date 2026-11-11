@@ -18,6 +18,7 @@ import numpy as np
 import pyreadstat
 from fastapi import HTTPException
 from openpyxl import Workbook
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.utils.dataframe import dataframe_to_rows
 
 from psycopg import sql as psql
@@ -58,7 +59,9 @@ def _workspace_choice_map(root_dir: str, workspace_slug: str, list_name: str) ->
     for _, row in choices[choices["list_name"].astype(str).str.strip() == list_name].iterrows():
         raw = str(row.get("name") or "").strip()
         code = raw[:-2] if raw.endswith(".0") else raw
-        label = str(row.get("label") or "").strip()
+        # Collapse repeated spaces so dashboard filter values equal the labels
+        # that the export's form-aware SQL produces (e.g. "Best  Aluminium").
+        label = " ".join(str(row.get("label") or "").split())
         if code and label:
             result[code] = label
     return result
@@ -3725,7 +3728,8 @@ def build_bht_overview_kpi_export_dataframe(
     regions_sel = [str(r).strip() for r in (regions or []) if str(r).strip()]
     sectors_sel = [str(s).strip() for s in (sectors or []) if str(s).strip()]
     region_values = _bht_region_filter_values(regions_sel)
-    sector_values = _choice_filter_values(SECTOR_LABELS, sectors_sel)
+    # SECTOR_LABELS is the legacy global list; category sector codes are per form.
+    sector_values = list(sectors_sel) if ACTIVE_WORKSPACE.get() else _choice_filter_values(SECTOR_LABELS, sectors_sel)
 
     # Resolve Region/Sector live from the case record with the form-aware label
     # SQL used by the Data Explorer. The overview mart only picks up label
@@ -4055,6 +4059,11 @@ def _normalize_bht_week(value: Any) -> str | None:
 
 
 def _bht_region_filter_values(regions: list[str]) -> list[str]:
+    if ACTIVE_WORKSPACE.get():
+        # Category forms reuse Region codes with different labels (3 is Abuja in
+        # Edible Oil but Kano in Margarine/Breakfast), so a global code map would
+        # pull in the wrong city. Callers match these labels with form-aware SQL.
+        return sorted({str(region or "").strip() for region in regions if str(region or "").strip()})
     labels = BHT_OVERVIEW_DISTRIBUTIONS["region"]["labels"]
     reverse = {label: code for code, label in labels.items()}
     values: set[str] = set()
@@ -5716,7 +5725,14 @@ def _excel_ready_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         out.loc[:, datetime_cols] = out.loc[:, datetime_cols].where(out.loc[:, datetime_cols].notna(), None)
     # openpyxl writes None as blank cells.  Replace dataframe missing values once
     # instead of invoking a Python normalizer for every cell during append.
-    return out.astype("object").where(pd.notna(out), None)
+    out = out.astype("object").where(pd.notna(out), None)
+    # Field data can carry control characters (e.g. \x0b from a phone keyboard)
+    # that openpyxl refuses with IllegalCharacterError, failing the whole file.
+    for col in out.columns:
+        out[col] = out[col].map(
+            lambda value: ILLEGAL_CHARACTERS_RE.sub("", value) if isinstance(value, str) else value
+        )
+    return out
 
 
 def _write_dataframe_to_xlsx(path: Path, df: pd.DataFrame, sheet_name: str = "Sheet1") -> None:

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, Loader2, Wand2 } from "lucide-react";
 
+import { useAuth } from "@/app/auth";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
@@ -14,6 +15,7 @@ import {
   type CustomTableSelectionPayload,
   type MainSurveySectionPayload,
 } from "@/lib/api";
+import { getSurveyWorkspace } from "@/data/workspaces";
 import { cn } from "@/lib/utils";
 
 type BreakType = "top" | "side";
@@ -85,7 +87,6 @@ const BHT_CATEGORY_OPTIONS = [
   { id: "edible-oil", label: "Edible Oil" },
   { id: "toilet-cleaner", label: "Toilet Cleaner" },
 ] as const;
-const DEFAULT_CATEGORY_SELECTION = [BHT_CATEGORY_OPTIONS[0].id];
 
 const DECIMAL_PLACE_OPTIONS = [1, 2, 3, 4];
 const DEFAULT_FORMAT_OPTIONS: CustomTableFormatOptions = {
@@ -267,6 +268,14 @@ export function MainSurveyCustomTableBuilderModal({
   filters,
   months,
 }: Props) {
+  const { selectedWorkspace } = useAuth();
+  // A category workspace holds one category; the legacy list has no Spread entry
+  // and would label Margarine questions as "Breakfast Cereals".
+  const categoryOptions = useMemo<{ id: string; label: string }[]>(() => {
+    const workspace = getSurveyWorkspace(selectedWorkspace);
+    return workspace ? [{ id: workspace.slug, label: workspace.shortLabel }] : [...BHT_CATEGORY_OPTIONS];
+  }, [selectedWorkspace]);
+  const defaultCategorySelection = useMemo(() => [categoryOptions[0].id], [categoryOptions]);
   const [activeStep, setActiveStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [activeBreak, setActiveBreak] = useState<BreakType>("top");
   const [activeSectionByBreak, setActiveSectionByBreak] = useState<Record<BreakType, string>>(EMPTY_SECTION_BY_BREAK);
@@ -281,7 +290,7 @@ export function MainSurveyCustomTableBuilderModal({
   const [loadingSectionIds, setLoadingSectionIds] = useState<string[]>([]);
   const [sectionErrors, setSectionErrors] = useState<Record<string, string>>({});
   const [builderError, setBuilderError] = useState<string>("");
-  const [selectedCategories, setSelectedCategories] = useState<string[]>([...DEFAULT_CATEGORY_SELECTION]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>(defaultCategorySelection);
 
   const selectedQuestionIdsByBreakRef = useRef<Record<BreakType, Record<string, string[]>>>(EMPTY_BY_BREAK);
   const selectedAnalysisRef = useRef<AnalysisOption[]>([]);
@@ -294,14 +303,14 @@ export function MainSurveyCustomTableBuilderModal({
   const activeSectionIdRef = useRef("");
 
   const effectiveSections = useMemo<SectionDef[]>(() => {
-    const selected = selectedCategories.length ? selectedCategories : [...DEFAULT_CATEGORY_SELECTION];
+    const selected = selectedCategories.length ? selectedCategories : defaultCategorySelection;
     return [
       { id: "omnibus", title: "Omnibus" },
-      ...BHT_CATEGORY_OPTIONS
+      ...categoryOptions
         .filter((category) => selected.includes(category.id))
         .map((category) => ({ id: category.id, title: category.label })),
     ];
-  }, [selectedCategories]);
+  }, [categoryOptions, defaultCategorySelection, selectedCategories]);
   const firstSectionId = effectiveSections[0]?.id || "";
   const sectionIdSet = useMemo(() => new Set(effectiveSections.map((s) => s.id)), [effectiveSections]);
 
@@ -354,7 +363,10 @@ export function MainSurveyCustomTableBuilderModal({
 
     setActiveStep(1);
     setActiveBreak("top");
-    setSelectedCategories((initialSelection?.filters?.categories?.length ? initialSelection.filters.categories : [...DEFAULT_CATEGORY_SELECTION]));
+    const savedCategories = (initialSelection?.filters?.categories ?? []).filter((id) =>
+      categoryOptions.some((category) => category.id === id),
+    );
+    setSelectedCategories(savedCategories.length ? savedCategories : defaultCategorySelection);
     questionRegistryRef.current = new Map();
     selectedQuestionIdsByBreakRef.current = nextSelectionByBreak;
     selectedAnalysisRef.current = nextAnalysis;
@@ -622,7 +634,7 @@ export function MainSurveyCustomTableBuilderModal({
   const handleCategoryToggle = (categoryId: string) => {
     setSelectedCategories((prev) => {
       const next = toggleInList(prev, categoryId);
-      return next.length ? next : [...DEFAULT_CATEGORY_SELECTION];
+      return next.length ? next : defaultCategorySelection;
     });
   };
 
@@ -696,8 +708,8 @@ export function MainSurveyCustomTableBuilderModal({
   };
 
   const categoryLabelById = useMemo(
-    () => new Map<string, string>(BHT_CATEGORY_OPTIONS.map((category) => [category.id, category.label])),
-    [],
+    () => new Map<string, string>(categoryOptions.map((category) => [category.id, category.label])),
+    [categoryOptions],
   );
   const activeStepBreak: BreakType = activeStep === 2 ? "side" : "top";
   const selectedDisplayMode = DISPLAY_MODES.find((mode) => mode.id === selectedDisplayModeId);
@@ -1143,7 +1155,7 @@ export function MainSurveyCustomTableBuilderModal({
             <section className="max-h-32 overflow-y-auto border-b border-[#dfe5f0] px-7 py-3">
               <div className="flex flex-wrap items-center gap-x-3 gap-y-3">
               <span className="mr-3 text-sm text-[#6a79a4]">Categories:</span>
-              {BHT_CATEGORY_OPTIONS.map((category) => {
+              {categoryOptions.map((category) => {
                 const active = selectedCategories.includes(category.id);
                 return (
                   <button
